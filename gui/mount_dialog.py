@@ -78,6 +78,9 @@ class MountDialog(QDialog):
             dialog = DeviceDialog(self)
             if dialog.exec():
                 self.volume_path.setText(dialog.selected_device)
+                # Créer un point de montage par défaut
+                mount_point = f"/media/{os.getenv('USER')}/veracrypt_{time.strftime('%Y%m%d_%H%M%S')}"
+                self.mount_point.setText(mount_point)
         else:
             # Pour les fichiers, on utilise le dialogue standard
             options = QFileDialog.Option.DontUseNativeDialog
@@ -216,8 +219,32 @@ class MountDialog(QDialog):
         
     def exec(self) -> bool:
         """Exécute le dialogue de montage."""
-        result = super().exec()
-        if result != QDialog.DialogCode.Accepted:
+        if not super().exec():
+            return False
+            
+        # Vérifier que tous les champs sont remplis
+        if not self.volume_path.text():
+            QMessageBox.warning(
+                self,
+                "Erreur",
+                "Veuillez sélectionner un volume"
+            )
+            return False
+            
+        if not self.mount_point.text():
+            QMessageBox.warning(
+                self,
+                "Erreur",
+                "Veuillez spécifier un point de montage"
+            )
+            return False
+            
+        if not self.password.text():
+            QMessageBox.warning(
+                self,
+                "Erreur",
+                "Veuillez entrer un mot de passe"
+            )
             return False
             
         # Montrer le loader
@@ -241,5 +268,6 @@ class MountDialog(QDialog):
                 return False
                 
             return True
+            
         finally:
             loading.hide()

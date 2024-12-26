@@ -196,21 +196,26 @@ class MainWindow(QMainWindow):
     def _do_refresh_volumes_list(self):
         """Effectue le rafraîchissement de la liste."""
         try:
+            self.log_message("Rafraîchissement de la liste des volumes montés...")
             self.mounted_volumes_list.clear()
-            self.mounted_volumes.clear()
             
-            # Récupérer la liste des volumes montés via veracrypt --list
+            # Récupérer la liste des volumes montés
             mounted_volumes = veracrypt.list_mounted_volumes()
             self.log_message(f"Volumes trouvés: {mounted_volumes}")
             
-            # Mettre à jour la liste
-            for slot, mount_point in mounted_volumes:
-                self.mounted_volumes_list.add_volume(mount_point)
-                self.mounted_volumes[mount_point] = slot  # Stocker le slot pour le démontage
-                self.log_message(f"Volume ajouté à la liste: {mount_point} (slot {slot})")
+            if mounted_volumes:
+                for slot, mount_point in mounted_volumes:
+                    self.log_message(f"Ajout du volume {mount_point} (slot {slot})")
+                    self.mounted_volumes_list.add_volume(mount_point)
+                    self.mounted_volumes[mount_point] = slot  # Stocker le slot pour le démontage
+            else:
+                self.log_message("Aucun volume monté")
+                
+        except Exception as e:
+            self.log_message(f"Erreur lors du rafraîchissement: {str(e)}")
         finally:
             self.hide_loading()
-            
+
     def _on_volume_unmounted(self, mount_point: str):
         """Appelé quand un volume est démonté depuis la liste."""
         self.log_message(f"Signal de démontage reçu pour: {mount_point}")
@@ -326,31 +331,17 @@ class MainWindow(QMainWindow):
     def _do_load_mounted_volumes(self):
         """Effectue le chargement des volumes montés."""
         try:
-            # Utiliser une seule commande pour obtenir toutes les informations
-            cmd = [
-                'sudo',
-                Constants.VERACRYPT_PATH,
-                '--text',
-                '--list'
-            ]
+            # Obtenir la liste des volumes montés
+            volumes = veracrypt.list_mounted_volumes()
             
-            success, stdout, stderr = veracrypt.execute_veracrypt_command(cmd)
-            
-            if not success:
-                self.log_message(f"Erreur lors de la liste des volumes: {stderr}")
-                return
+            # Mettre à jour la liste
+            for slot, mount_point in volumes:
+                self.mounted_volumes[mount_point] = slot
                 
-            # Parser la sortie pour extraire les volumes montés
-            for line in stdout.splitlines():
-                if "slot" in line.lower():
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        slot = parts[1].strip(":")  # Extraire le numéro de slot
-                        mount_point = parts[3]  # Extraire le point de montage
-                        self.mounted_volumes[mount_point] = slot
-            
             self.log_message(f"Volumes chargés: {self.mounted_volumes}")
             if self.mounted_volumes:
                 self._refresh_volumes_list()
+        except Exception as e:
+            self.log_message(f"Erreur lors du chargement des volumes: {str(e)}")
         finally:
             self.hide_loading()

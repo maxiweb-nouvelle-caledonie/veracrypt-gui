@@ -2,150 +2,156 @@
 Utilitaires pour interagir avec VeraCrypt en ligne de commande.
 """
 
+import os
 import subprocess
 from typing import Tuple, List, Optional
-from ..constants import Constants
+from . import system
+from . import polkit
+from .auth_agent import auth_agent
 
-def execute_veracrypt_command(cmd: List[str], password: Optional[str] = None, timeout: int = Constants.MOUNT_TIMEOUT) -> Tuple[bool, str, str]:
-    """
-    Exécute une commande VeraCrypt et retourne le résultat.
+def execute_veracrypt_command(command: List[str], need_password: bool = False) -> Tuple[bool, str, str]:
+    """Exécute une commande veracrypt.
     
     Args:
-        cmd: Liste des arguments de la commande
-        password: Mot de passe optionnel
-        timeout: Timeout en secondes
+        command: Liste contenant la commande et ses arguments
+        need_password: Si True, la commande nécessite un mot de passe
         
     Returns:
-        Tuple (succès, stdout, stderr)
+        Tuple contenant:
+        - Un booléen indiquant si la commande a réussi
+        - La sortie standard
+        - La sortie d'erreur
     """
     try:
-        result = subprocess.run(
-            cmd,
-            input=f"{password}\n" if password else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=timeout
-        )
-        return result.returncode == 0, result.stdout, result.stderr
-    except subprocess.TimeoutExpired as e:
-        return False, "", "Le processus a expiré"
+        # Ajouter l'option --stdin si nécessaire
+        if need_password and '--stdin' not in command:
+            command.insert(-1, '--stdin')
+            
+        # Exécuter la commande avec polkit
+        success, stdout, stderr = polkit.run_privileged_command(command)
+        
+        return success, stdout, stderr
+        
+    except Exception as e:
+        return False, '', str(e)
 
 def list_mounted_volumes() -> List[Tuple[str, str]]:
     """Liste les volumes VeraCrypt montés.
+    
     Returns:
-        Liste de tuples (slot, point_de_montage)
+        Liste de tuples contenant:
+        - Le numéro de slot
+        - Le point de montage
     """
-    cmd = [
-        'sudo',
-        Constants.VERACRYPT_PATH,
-        '--text',
-        '--list'
-    ]
-    success, stdout, stderr = execute_veracrypt_command(cmd)
-    
-    if not success:
-        print(f"Erreur lors de la liste des volumes: {stderr}")
+    try:
+        command = [
+            system.Constants.VERACRYPT_PATH,
+            '--text',
+            '--non-interactive',
+            '--list'
+        ]
+        
+        print(f"Exécution de la commande: {' '.join(command)}")
+        
+        # Exécuter la commande avec l'agent
+        success, stdout, stderr = auth_agent.run_command(command)
+        
+        print(f"Sortie standard:\n{stdout}")
+        print(f"Sortie d'erreur:\n{stderr}")
+        
+        if not success:
+            print(f"Erreur lors de la liste des volumes: {stderr}")
+            return []
+            
+        volumes = []
+        for line in stdout.splitlines():
+            print(f"Analyse de la ligne: {line}")
+            # Format: "1: /dev/sdc2 /dev/loop32 /media/jayces/veracrypt_20241226_205820"
+            parts = line.strip().split()
+            if len(parts) >= 4 and parts[0].endswith(':'):
+                slot = parts[0].rstrip(':')  # Extraire le numéro de slot
+                mount_point = parts[-1]  # Le point de montage est le dernier élément
+                print(f"Volume trouvé - slot: {slot}, mount_point: {mount_point}")
+                volumes.append((slot, mount_point))
+                    
+        print(f"Volumes trouvés: {volumes}")
+        return volumes
+        
+    except Exception as e:
+        print(f"Erreur lors de la liste des volumes: {str(e)}")
         return []
-    
-    print(f"Sortie de veracrypt --list:\n{stdout}")
-    
-    volumes = []
-    for line in stdout.split('\n'):
-        line = line.strip()
-        if line and ":" in line:
-            # Format: "1: /chemin/source /dev/mapper/veracrypt1 /point/de/montage"
-            parts = line.split(':', 1)
-            if len(parts) == 2:
-                slot = parts[0].strip()
-                # Prendre le dernier élément (point de montage)
-                volume_info = parts[1].strip().split()
-                if volume_info:
-                    mount_point = volume_info[-1]  # Dernier élément = point de montage
-                    volumes.append((slot, mount_point))
-    
-    print(f"Volumes trouvés (slot, point de montage): {volumes}")
-    return volumes
 
 def mount_volume(volume_path: str, mount_point: str, password: str) -> Tuple[bool, str]:
-    """Monte un volume VeraCrypt."""
-    cmd = [
-        'sudo',
-        Constants.VERACRYPT_PATH,
-        '--text',
-        '--non-interactive',
-        '--verbose',
-        '--stdin',
-        '--protect-hidden=no',
-        volume_path,
-        mount_point
-    ]
-    success, stdout, stderr = execute_veracrypt_command(cmd, password)
-    return success, stderr if not success else stdout
-
-def unmount_volume(mount_path: str) -> Tuple[bool, str]:
-    """Démonte un volume VeraCrypt."""
-    # Construire la commande avec le point de montage
-    cmd = [
-        'sudo',
-        Constants.VERACRYPT_PATH,
-        '--text',
-        '--dismount',
-        mount_path,  # Utiliser le point de montage au lieu du slot
-        '--force'
-    ]
+    """Monte un volume VeraCrypt.
     
-    # Afficher la commande pour exécution manuelle
-    cmd_str = ' '.join(cmd)
-    print(f"\nCommande de démontage à exécuter manuellement:\n{cmd_str}\n")
-    
+    Args:
+        volume_path: Chemin vers le volume à monter
+        mount_point: Point de montage
+        password: Mot de passe du volume
+        
+    Returns:
+        Tuple contenant:
+        - Un booléen indiquant si le montage a réussi
+        - Un message d'erreur si le montage a échoué
+    """
     try:
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=Constants.MOUNT_TIMEOUT
-        )
+        # Vérifier que le volume existe
+        if not os.path.exists(volume_path):
+            return False, f"Le volume {volume_path} n'existe pas"
+            
+        # Créer le point de montage si nécessaire
+        if not os.path.exists(mount_point):
+            os.makedirs(mount_point, exist_ok=True)
+            
+        # Monter le volume
+        command = [
+            system.Constants.VERACRYPT_PATH,
+            '--text',  # Mode texte
+            '--non-interactive',  # Mode non interactif
+            '--password', password,  # Mot de passe en argument
+            '--mount',
+            volume_path,
+            mount_point
+        ]
         
-        print(f"Sortie de la commande:")
-        print(f"  stdout: {result.stdout}")
-        print(f"  stderr: {result.stderr}")
-        print(f"  code retour: {result.returncode}")
+        # Exécuter la commande avec l'agent
+        success, stdout, stderr = auth_agent.run_command(command)
         
-        if result.returncode == 0:
-            return True, "Volume démonté avec succès"
+        if success:
+            return True, ''
         else:
-            # Essayer avec --all si le premier essai échoue
-            print("\nEssai avec --all...")
-            cmd_all = [
-                'sudo',
-                Constants.VERACRYPT_PATH,
-                '--text',
-                '--dismount',
-                '--all',
-                '--force'
-            ]
-            print(f"Commande alternative: {' '.join(cmd_all)}")
+            return False, stderr
             
-            result_all = subprocess.run(
-                cmd_all,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=Constants.MOUNT_TIMEOUT
-            )
-            
-            print(f"Sortie de la commande --all:")
-            print(f"  stdout: {result_all.stdout}")
-            print(f"  stderr: {result_all.stderr}")
-            print(f"  code retour: {result_all.returncode}")
-            
-            if result_all.returncode == 0:
-                return True, "Tous les volumes ont été démontés"
-            return False, f"Erreur: {result.stderr}"
-            
-    except subprocess.TimeoutExpired:
-        return False, "Le processus a expiré"
     except Exception as e:
-        return False, f"Erreur inattendue: {str(e)}"
+        return False, str(e)
+
+def unmount_volume(mount_point: str) -> Tuple[bool, str]:
+    """Démonte un volume VeraCrypt.
+    
+    Args:
+        mount_point: Point de montage du volume à démonter
+        
+    Returns:
+        Tuple contenant:
+        - Un booléen indiquant si le démontage a réussi
+        - Un message d'erreur si le démontage a échoué
+    """
+    try:
+        command = [
+            system.Constants.VERACRYPT_PATH,
+            '--text',
+            '--non-interactive',
+            '--dismount',
+            mount_point
+        ]
+        
+        # Exécuter la commande avec l'agent
+        success, stdout, stderr = auth_agent.run_command(command)
+        
+        if success:
+            return True, ''
+        else:
+            return False, stderr
+            
+    except Exception as e:
+        return False, str(e)
