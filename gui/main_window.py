@@ -6,21 +6,35 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, 
     QPushButton, QLabel, QTextEdit,
     QHBoxLayout, QFrame, QMessageBox,
-    QSplitter, QListWidget
+    QSplitter, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from src.gui.mount_dialog import MountDialog
 from src.gui.loading_dialog import LoadingDialog
 from src.gui.mounted_volumes_list import MountedVolumesList
 from src.utils import veracrypt, system
+from src.utils.sudo_session import sudo_session
 from src.constants import Constants
+import sys
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.mounted_volumes = {}
         self.loading_dialog = None
         self.initUI()
+        
+        # Initialiser la session sudo
+        self.log_message("Initialisation de la session sudo...")
+        if not sudo_session.initialize_session():
+            QMessageBox.critical(
+                self,
+                "Erreur",
+                "Impossible d'initialiser la session sudo.\n"
+                "L'application nécessite des droits administrateur pour fonctionner."
+            )
+            sys.exit(1)
+            
+        self.log_message("Session sudo initialisée avec succès")
         self._load_mounted_volumes()  # Chargement initial des volumes montés
 
     def initUI(self):
@@ -100,7 +114,7 @@ class MainWindow(QMainWindow):
         # Connecter les signaux
         self.mount_file_button.clicked.connect(self._mount_file)
         self.mount_device_button.clicked.connect(self._mount_device)
-        self.unmount_button.clicked.connect(self._unmount_volume_button_clicked)
+        self.unmount_button.clicked.connect(self._on_unmount_volume)
         self.test_button.clicked.connect(self._test_veracrypt_list)
         self.cleanup_button.clicked.connect(self._cleanup_mount_points)
 
@@ -114,7 +128,7 @@ class MainWindow(QMainWindow):
         self._center_dialog(dialog)
         if dialog.exec():
             self.log_message("Montage du fichier terminé")
-            self._refresh_volumes_list()
+            self._refresh_mounted_volumes()
 
     def _mount_device(self):
         """Gère le montage d'un périphérique."""
@@ -122,163 +136,136 @@ class MainWindow(QMainWindow):
         self._center_dialog(dialog)
         if dialog.exec():
             self.log_message("Montage du périphérique terminé")
-            self._refresh_volumes_list()
+            self._refresh_mounted_volumes()
 
-    def _unmount_volume_button_clicked(self):
-        """Gestion du clic sur le bouton de démontage."""
+    def _refresh_mounted_volumes(self):
+        """Rafraîchit la liste des volumes montés."""
+        try:
+            self.log_message("Rafraîchissement de la liste des volumes montés...")
+            volumes = veracrypt.list_mounted_volumes()
+            
+            # Effacer la liste actuelle
+            self.mounted_volumes_list.clear()
+            
+            if not volumes:
+                self.log_message("Aucun volume monté")
+                return
+                
+            # Ajouter les volumes à la liste
+            for slot, mount_point in volumes:
+                item = QListWidgetItem(f"{mount_point}")
+                item.setData(Qt.ItemDataRole.UserRole, (slot, mount_point))
+                self.mounted_volumes_list.addItem(item)
+                
+            self.log_message(f"Volumes chargés: {volumes}")
+            
+        except Exception as e:
+            self.log_message(f"Erreur lors du rafraîchissement: {str(e)}")
+            
+    def _on_unmount_volume(self):
+        """Appelé quand on clique sur le bouton de démontage."""
         # Récupérer le volume sélectionné
-        selected_items = self.mounted_volumes_list.selectedItems()
-        if not selected_items:
-            self._show_message(
+        current = self.mounted_volumes_list.currentItem()
+        if not current:
+            QMessageBox.warning(
+                self,
                 "Erreur",
-                "Veuillez sélectionner un volume à démonter",
-                QMessageBox.Icon.Warning
+                "Veuillez sélectionner un volume à démonter"
             )
             return
             
-        mount_point = selected_items[0].data(Qt.ItemDataRole.UserRole)
-        self.log_message(f"Tentative de démontage du volume: {mount_point}")
+        # Récupérer le point de montage
+        _, mount_point = current.data(Qt.ItemDataRole.UserRole)
         
-        # Montrer le loader
-        self.show_loading("Démontage du volume en cours...")
+        # Démonter le volume
+        success, error = veracrypt.unmount_volume(mount_point)
         
-        # Utiliser QTimer pour laisser l'interface se mettre à jour
-        QTimer.singleShot(100, lambda: self._unmount_volume(mount_point))
-
-    def _unmount_volume(self, mount_point):
-        """Démonte un volume."""
-        try:
-            # Obtenir le slot associé
-            slot = self.mounted_volumes.get(mount_point)
-            if not slot:
-                self._show_message(
-                    "Erreur",
-                    f"Impossible de trouver le slot pour {mount_point}",
-                    QMessageBox.Icon.Critical
-                )
-                return
-                
-            self.log_message(f"Démontage du slot {slot} pour {mount_point}")
-            
-            # Démonter le volume
-            success, message = veracrypt.unmount_volume(mount_point)
-            self.log_message(f"Résultat du démontage: success={success}, message={message}")
-            
-            if success:
-                self.log_message(f"Volume démonté avec succès: {mount_point}")
-                # Mettre à jour la liste des volumes montés
-                if mount_point in self.mounted_volumes:
-                    del self.mounted_volumes[mount_point]
-                self._refresh_volumes_list()
-                self._show_message(
-                    "Succès",
-                    f"Volume démonté avec succès: {mount_point}"
-                )
-            else:
-                self.log_message(f"Erreur lors du démontage: {message}")
-                self._show_message(
-                    "Erreur",
-                    f"Erreur lors du démontage:\n{message}",
-                    QMessageBox.Icon.Critical
-                )
-                # Rafraîchir la liste même en cas d'erreur
-                self._refresh_volumes_list()
-        finally:
-            self.hide_loading()
-
-    def _refresh_volumes_list(self):
-        """Rafraîchit la liste des volumes montés."""
-        self.show_loading("Rafraîchissement de la liste...")
-        
-        # Utiliser QTimer pour laisser l'interface se mettre à jour
-        QTimer.singleShot(100, self._do_refresh_volumes_list)
-        
-    def _do_refresh_volumes_list(self):
-        """Effectue le rafraîchissement de la liste."""
-        try:
-            self.log_message("Rafraîchissement de la liste des volumes montés...")
-            self.mounted_volumes_list.clear()
-            
-            # Récupérer la liste des volumes montés
-            mounted_volumes = veracrypt.list_mounted_volumes()
-            self.log_message(f"Volumes trouvés: {mounted_volumes}")
-            
-            if mounted_volumes:
-                for slot, mount_point in mounted_volumes:
-                    self.log_message(f"Ajout du volume {mount_point} (slot {slot})")
-                    self.mounted_volumes_list.add_volume(mount_point)
-                    self.mounted_volumes[mount_point] = slot  # Stocker le slot pour le démontage
-            else:
-                self.log_message("Aucun volume monté")
-                
-        except Exception as e:
-            self.log_message(f"Erreur lors du rafraîchissement: {str(e)}")
-        finally:
-            self.hide_loading()
+        if success:
+            QMessageBox.information(
+                self,
+                "Succès",
+                f"Le volume {mount_point} a été démonté avec succès"
+            )
+            # Rafraîchir la liste après le démontage
+            self._refresh_mounted_volumes()
+        else:
+            QMessageBox.critical(
+                self,
+                "Erreur",
+                f"Erreur lors du démontage: {error}"
+            )
 
     def _on_volume_unmounted(self, mount_point: str):
         """Appelé quand un volume est démonté depuis la liste."""
         self.log_message(f"Signal de démontage reçu pour: {mount_point}")
-        if mount_point in self.mounted_volumes:
-            del self.mounted_volumes[mount_point]
-        self._refresh_volumes_list()
+        self._refresh_mounted_volumes()
 
     def _test_veracrypt_list(self):
         """Teste la commande veracrypt --list."""
-        self.show_loading("Test de VeraCrypt en cours...")
-        
-        # Utiliser QTimer pour laisser l'interface se mettre à jour
-        QTimer.singleShot(100, self._do_test_veracrypt_list)
-        
-    def _do_test_veracrypt_list(self):
-        """Effectue le test de VeraCrypt."""
+        self.show_loading("Test de veracrypt --list...")
         try:
-            success, stdout, stderr = veracrypt.execute_veracrypt_command([
-                'sudo',
-                Constants.VERACRYPT_PATH,
+            success, stdout, stderr = veracrypt.run_veracrypt_command([
+                system.Constants.VERACRYPT_PATH,
                 '--text',
-                '--list'
+                '--non-interactive',
+                '--test'
             ])
             
-            self.log_message("Test de veracrypt --list")
             if success:
-                self.log_message(f"Sortie:\n{stdout}")
+                self.log_message("Auto-tests de tous les algorithmes réussis")
             else:
                 self.log_message(f"Erreur:\n{stderr}")
                 
-            self._refresh_volumes_list()
+            self._refresh_mounted_volumes()
+        except Exception as e:
+            self.log_message(f"Erreur lors du test: {str(e)}")
         finally:
             self.hide_loading()
-            
+
     def _cleanup_mount_points(self):
-        """Nettoie les points de montage non utilisés."""
+        """Nettoie les points de montage."""
         self.show_loading("Nettoyage des points de montage...")
-        
-        # Utiliser QTimer pour laisser l'interface se mettre à jour
-        QTimer.singleShot(100, self._do_cleanup_mount_points)
-        
-    def _do_cleanup_mount_points(self):
-        """Effectue le nettoyage des points de montage."""
         try:
-            success, message = system.cleanup_mount_points()
+            # Démonter tous les volumes
+            volumes = veracrypt.list_mounted_volumes()
+            for slot, mount_point in volumes:
+                success, error = veracrypt.unmount_volume(mount_point)
+                if not success:
+                    self.log_message(f"Erreur lors du démontage de {mount_point}: {error}")
+                    
+            # Rafraîchir la liste
+            self._refresh_mounted_volumes()
             
-            if success:
-                self.log_message(f"Succès: {message}")
-                self._show_message(
-                    "Succès",
-                    message,
-                    QMessageBox.Icon.Information
-                )
-            else:
-                self.log_message(f"Erreur: {message}")
-                self._show_message(
-                    "Erreur",
-                    f"Erreur lors du nettoyage:\n{message}",
-                    QMessageBox.Icon.Critical
-                )
+            QMessageBox.information(
+                self,
+                "Succès",
+                "Nettoyage des points de montage terminé"
+            )
+        except Exception as e:
+            self.log_message(f"Erreur lors du nettoyage: {str(e)}")
+            QMessageBox.critical(
+                self,
+                "Erreur",
+                f"Erreur lors du nettoyage:\n{str(e)}"
+            )
+        finally:
+            self.hide_loading()
+
+    def _load_mounted_volumes(self):
+        """Charge la liste des volumes montés."""
+        self.show_loading("Recherche des volumes montés...")
+        try:
+            volumes = veracrypt.list_mounted_volumes()
+            
+            # Mettre à jour la liste
+            for slot, mount_point in volumes:
+                item = QListWidgetItem(f"{mount_point}")
+                item.setData(Qt.ItemDataRole.UserRole, (slot, mount_point))
+                self.mounted_volumes_list.addItem(item)
                 
-            # Rafraîchir la liste des volumes montés
-            self._refresh_volumes_list()
+            self.log_message(f"Volumes chargés: {volumes}")
+        except Exception as e:
+            self.log_message(f"Erreur lors du chargement des volumes: {str(e)}")
         finally:
             self.hide_loading()
 
@@ -320,28 +307,3 @@ class MainWindow(QMainWindow):
         msg_box.setText(message)
         self._center_dialog(msg_box)
         msg_box.exec()
-
-    def _load_mounted_volumes(self):
-        """Charge la liste des volumes montés au démarrage."""
-        self.show_loading("Recherche des volumes montés...")
-        
-        # Utiliser QTimer pour laisser l'interface se mettre à jour
-        QTimer.singleShot(100, self._do_load_mounted_volumes)
-        
-    def _do_load_mounted_volumes(self):
-        """Effectue le chargement des volumes montés."""
-        try:
-            # Obtenir la liste des volumes montés
-            volumes = veracrypt.list_mounted_volumes()
-            
-            # Mettre à jour la liste
-            for slot, mount_point in volumes:
-                self.mounted_volumes[mount_point] = slot
-                
-            self.log_message(f"Volumes chargés: {self.mounted_volumes}")
-            if self.mounted_volumes:
-                self._refresh_volumes_list()
-        except Exception as e:
-            self.log_message(f"Erreur lors du chargement des volumes: {str(e)}")
-        finally:
-            self.hide_loading()

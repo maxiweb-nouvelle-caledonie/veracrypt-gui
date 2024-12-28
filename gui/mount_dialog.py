@@ -5,7 +5,8 @@ Dialogue de montage pour les fichiers et périphériques VeraCrypt.
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit,
-    QFileDialog, QMessageBox, QDialogButtonBox
+    QFileDialog, QMessageBox, QDialogButtonBox,
+    QInputDialog
 )
 from PyQt6.QtCore import QDir, Qt, QUrl
 from typing import Optional, Tuple
@@ -14,8 +15,8 @@ from datetime import datetime
 from src.constants import Constants
 from src.utils import veracrypt, system
 import time
-from src.gui.loading_dialog import LoadingDialog  # Importer le dialogue de chargement
-from src.gui.device_dialog import DeviceDialog  # Importer le dialogue de périphériques
+from src.gui.loading_dialog import LoadingDialog
+from src.gui.device_dialog import DeviceDialog
 
 class MountDialog(QDialog):
     def __init__(self, parent=None, is_device=False):
@@ -25,7 +26,7 @@ class MountDialog(QDialog):
         
     def setup_ui(self):
         """Configure l'interface utilisateur."""
-        self.setWindowTitle("Monter un volume VeraCrypt")
+        self.setWindowTitle("Monter un volume")
         layout = QVBoxLayout()
         
         # Volume
@@ -79,7 +80,10 @@ class MountDialog(QDialog):
             if dialog.exec():
                 self.volume_path.setText(dialog.selected_device)
                 # Créer un point de montage par défaut
-                mount_point = f"/media/{os.getenv('USER')}/veracrypt_{time.strftime('%Y%m%d_%H%M%S')}"
+                mount_point = os.path.join(
+                    veracrypt.get_user_mount_dir(),
+                    f"veracrypt_{time.strftime('%Y%m%d_%H%M%S')}"
+                )
                 self.mount_point.setText(mount_point)
         else:
             # Pour les fichiers, on utilise le dialogue standard
@@ -99,29 +103,22 @@ class MountDialog(QDialog):
                 
     def _browse_mount_point(self):
         """Ouvre un dialogue pour sélectionner le point de montage."""
-        dir_path = QFileDialog.getExistingDirectory(
+        # Utiliser le répertoire utilisateur comme base
+        user_dir = veracrypt.get_user_mount_dir()
+        
+        # Demander le nom du répertoire
+        dir_name, ok = QInputDialog.getText(
             self,
-            "Sélectionner un point de montage",
-            Constants.BASE_MOUNT_DIR
-        )
-        if dir_path:
-            self.mount_point.setText(dir_path)
-            
-    def _create_mount_point(self) -> str:
-        """Crée un point de montage dynamique."""
-        # Générer un nom unique basé sur l'horodatage
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        mount_dir = os.path.join(
-            Constants.BASE_MOUNT_DIR,
-            f"{Constants.MOUNT_PREFIX}{timestamp}"
+            "Point de montage",
+            "Nom du répertoire de montage:",
+            QLineEdit.EchoMode.Normal,
+            ""
         )
         
-        # Créer le répertoire
-        success, error = system.ensure_directory(mount_dir)
-        if not success:
-            raise Exception(f"Impossible de créer le point de montage: {error}")
-            
-        return mount_dir
+        if ok and dir_name:
+            # Construire le chemin complet
+            mount_point = os.path.join(user_dir, dir_name)
+            self.mount_point.setText(mount_point)
             
     def _get_volume_path(self) -> bool:
         """Vérifie et retourne le chemin du volume."""
@@ -167,27 +164,22 @@ class MountDialog(QDialog):
         """Vérifie et retourne le point de montage."""
         mount_point = self.mount_point.text().strip()
         
-        # Si aucun point de montage n'est spécifié, en créer un
+        # Si aucun point de montage n'est spécifié
         if not mount_point:
-            try:
-                mount_point = self._create_mount_point()
-                self.mount_point.setText(mount_point)
-                return True
-            except Exception as e:
-                QMessageBox.critical(
-                    self,
-                    "Erreur",
-                    str(e)
-                )
-                return False
-                
-        # Vérifier si le point de montage existe
-        success, error = system.ensure_directory(mount_point)
-        if not success:
             QMessageBox.warning(
                 self,
                 "Erreur",
-                f"Impossible d'accéder au point de montage: {error}"
+                "Veuillez spécifier un point de montage"
+            )
+            return False
+            
+        # Vérifier le point de montage
+        valid, error = veracrypt.check_mount_point(mount_point)
+        if not valid:
+            QMessageBox.warning(
+                self,
+                "Erreur",
+                error
             )
             return False
             
@@ -215,38 +207,6 @@ class MountDialog(QDialog):
         if not self._get_password():
             return
             
-        self.accept()
-        
-    def exec(self) -> bool:
-        """Exécute le dialogue de montage."""
-        if not super().exec():
-            return False
-            
-        # Vérifier que tous les champs sont remplis
-        if not self.volume_path.text():
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Veuillez sélectionner un volume"
-            )
-            return False
-            
-        if not self.mount_point.text():
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Veuillez spécifier un point de montage"
-            )
-            return False
-            
-        if not self.password.text():
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Veuillez entrer un mot de passe"
-            )
-            return False
-            
         # Montrer le loader
         loading = LoadingDialog(self, "Montage du volume en cours...")
         loading.show()
@@ -259,15 +219,22 @@ class MountDialog(QDialog):
                 self.password.text()
             )
             
-            if not success:
+            if success:
+                QMessageBox.information(
+                    self,
+                    "Succès",
+                    f"Le volume {self.volume_path.text()} a été monté avec succès sur {self.mount_point.text()}"
+                )
+                self.accept()
+            else:
                 QMessageBox.critical(
                     self,
                     "Erreur",
-                    f"Erreur lors du montage:\n{message}"
+                    f"Erreur lors du montage: {message}"
                 )
-                return False
-                
-            return True
-            
         finally:
             loading.hide()
+            
+    def exec(self) -> bool:
+        """Exécute le dialogue de montage."""
+        return super().exec()
