@@ -155,8 +155,11 @@ class MainWindow(QMainWindow):
                 favorite['name'],
                 self
             )
+            # Créer un QListWidgetItem temporaire pour le favori
+            temp_item = QListWidgetItem()
+            temp_item.setData(Qt.ItemDataRole.UserRole, favorite['volume_path'])
             action.triggered.connect(
-                lambda checked, f=favorite: self._show_mount_dialog(f['is_device'], f['volume_path'])
+                lambda checked, item=temp_item: self._mount_favorite(item)
             )
             favorites_menu.addAction(action)
             
@@ -211,14 +214,94 @@ class MainWindow(QMainWindow):
             
     def _mount_favorite(self, item):
         """Monte un volume favori."""
-        favorite = item.data(Qt.ItemDataRole.UserRole)
-        self._show_mount_dialog(favorite['is_device'], favorite['volume_path'])
-        
+        try:
+            # Récupérer le chemin du favori
+            favorite_path = item.data(Qt.ItemDataRole.UserRole)
+            if not favorite_path:
+                return
+                
+            # Récupérer les informations du favori
+            favorite = self.favorites.get_favorite(favorite_path)
+            if not favorite:
+                return
+                
+            # Récupérer le point de montage configuré ou en générer un nouveau
+            mount_point = favorite.get('mount_point') or veracrypt.generate_mount_point()
+            
+            # Vérifier si un mot de passe est enregistré
+            password = self.favorites.get_favorite_password(favorite_path)
+            
+            if password:
+                # Si on a le mot de passe, monter directement
+                self.log_message(f"Montage automatique du favori {favorite['name']}...")
+                
+                # Afficher le dialogue de chargement
+                self.loading_dialog = LoadingDialog(self)
+                self.loading_dialog.show()
+                
+                # Monter le volume
+                success, error = veracrypt.mount_volume(favorite_path, mount_point, password)
+                
+                # Fermer le dialogue de chargement
+                if self.loading_dialog:
+                    self.loading_dialog.close()
+                    self.loading_dialog = None
+                
+                if success:
+                    self.log_message(f"Volume monté avec succès sur {mount_point}")
+                    self._refresh_mounted_volumes()
+                else:
+                    self.log_message(f"Erreur lors du montage : {error}")
+                    QMessageBox.critical(
+                        self,
+                        "Erreur",
+                        f"Impossible de monter le volume : {error}"
+                    )
+            else:
+                # Si pas de mot de passe, afficher le dialogue de montage
+                self._show_mount_dialog(favorite.get('is_device', False), favorite_path)
+                
+        except Exception as e:
+            self.log_message(f"Erreur lors du montage du favori : {str(e)}")
+            QMessageBox.critical(
+                self,
+                "Erreur",
+                f"Erreur lors du montage du favori : {str(e)}"
+            )
+            
     def _remove_favorite(self, item):
         """Supprime un favori."""
-        favorite = item.data(Qt.ItemDataRole.UserRole)
-        if self.favorites.remove_favorite(favorite['volume_path']):
-            self._refresh_favorites()
+        # Récupérer le chemin du volume directement
+        volume_path = item.data(Qt.ItemDataRole.UserRole)
+        if not volume_path:
+            return
+            
+        # Récupérer le nom du favori pour l'afficher dans le message
+        favorite = self.favorites.get_favorite(volume_path)
+        if not favorite:
+            return
+            
+        # Demander confirmation
+        reply = QMessageBox.question(
+            self,
+            "Confirmation",
+            f"Voulez-vous vraiment supprimer le favori {favorite['name']} ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            if self.favorites.remove_favorite(volume_path):
+                self.log_message(f"Favori {favorite['name']} supprimé")
+                # Rafraîchir la liste des favoris
+                self._refresh_favorites()
+            else:
+                self.log_message(f"Erreur lors de la suppression du favori {favorite['name']}")
+                QMessageBox.critical(
+                    self,
+                    "Erreur",
+                    "Impossible de supprimer le favori"
+                )
             
     def _refresh_favorites(self):
         """Rafraîchit la liste des favoris."""
@@ -232,14 +315,8 @@ class MainWindow(QMainWindow):
         for favorite in favorites:
             self.log_message(f"Ajout du favori : {favorite['name']} ({favorite['volume_path']})")
             item = QListWidgetItem(favorite['name'])
-            item.setData(Qt.ItemDataRole.UserRole, favorite)
-            
-            # Ajouter l'icône appropriée selon le type
-            if favorite['is_device']:
-                item.setIcon(self.device_icon)
-            else:
-                item.setIcon(self.file_icon)
-                
+            item.setData(Qt.ItemDataRole.UserRole, favorite['volume_path'])
+            item.setIcon(self.device_icon if favorite['is_device'] else self.file_icon)
             self.favorites_list.addItem(item)
             
         # Rafraîchir le menu des favoris

@@ -5,6 +5,7 @@ Gestion des favoris VeraCrypt.
 import json
 import os
 from typing import List, Dict, Optional
+from .crypto import PasswordEncryption
 
 class Favorites:
     def __init__(self):
@@ -38,7 +39,7 @@ class Favorites:
             print(f"Erreur lors de la sauvegarde des favoris : {e}")
             return False
     
-    def add_favorite(self, name: str, path: str, is_device: bool, mount_point: str = None) -> bool:
+    def add_favorite(self, name: str, path: str, is_device: bool, mount_point: str = None, password: str = None) -> bool:
         """Ajoute un favori.
         
         Args:
@@ -46,6 +47,7 @@ class Favorites:
             path: Chemin du volume/périphérique
             is_device: True si c'est un périphérique, False si c'est un fichier
             mount_point: Point de montage préféré (optionnel)
+            password: Mot de passe du volume (optionnel)
             
         Returns:
             True si l'ajout a réussi, False sinon
@@ -65,6 +67,15 @@ class Favorites:
         if mount_point:
             favorite['mount_point'] = mount_point
             
+        # Chiffrer et sauvegarder le mot de passe si fourni
+        if password:
+            try:
+                encrypted_password = PasswordEncryption.encrypt_password(password)
+                favorite['password'] = encrypted_password
+            except Exception as e:
+                print(f"Erreur lors du chiffrement du mot de passe : {e}")
+                # Continuer sans le mot de passe
+                
         print(f"Ajout du favori : {favorite}")  # Debug
         self.favorites.append(favorite)
         return self._save_favorites()
@@ -95,4 +106,22 @@ class Favorites:
         for favorite in self.favorites:
             if favorite['volume_path'] == path:
                 return favorite
+        return None
+    
+    def get_favorite_password(self, path: str) -> Optional[str]:
+        """Récupère le mot de passe d'un favori.
+        
+        Args:
+            path: Chemin du volume/périphérique
+            
+        Returns:
+            Le mot de passe en clair ou None si non trouvé ou erreur
+        """
+        favorite = self.get_favorite(path)
+        if favorite and 'password' in favorite:
+            try:
+                return PasswordEncryption.decrypt_password(favorite['password'])
+            except Exception as e:
+                print(f"Erreur lors du déchiffrement du mot de passe : {e}")
+                return None
         return None

@@ -31,6 +31,12 @@ class MountDialog(QDialog):
         self.favorite_added = False  # Pour suivre si un favori a été ajouté
         self.setup_ui()
         
+        # Si c'est un favori, charger le mot de passe s'il existe
+        if self.favorite_path:
+            password = self.favorites.get_favorite_password(self.favorite_path)
+            if password:
+                self.password_edit.setText(password)
+        
     def setup_ui(self):
         """Configure l'interface utilisateur."""
         self.setWindowTitle("Monter un volume" if not self.is_device else "Monter un périphérique")
@@ -77,11 +83,24 @@ class MountDialog(QDialog):
         password_layout.addWidget(self.password_edit)
         layout.addLayout(password_layout)
         
+        # Options
+        options_layout = QVBoxLayout()
+        
         # Option favori (seulement si ce n'est pas un favori existant)
         self.favorite_checkbox = QCheckBox("Ajouter aux favoris")
         if self.favorite_path:
             self.favorite_checkbox.setVisible(False)
-        layout.addWidget(self.favorite_checkbox)
+        options_layout.addWidget(self.favorite_checkbox)
+        
+        # Option pour sauvegarder le mot de passe (seulement si on ajoute aux favoris)
+        self.save_password_checkbox = QCheckBox("Sauvegarder le mot de passe")
+        self.save_password_checkbox.setEnabled(False)
+        options_layout.addWidget(self.save_password_checkbox)
+        
+        # Connecter le signal de changement d'état de l'option favori
+        self.favorite_checkbox.stateChanged.connect(self._on_favorite_checkbox_changed)
+        
+        layout.addLayout(options_layout)
         
         # Boutons
         button_box = QDialogButtonBox(
@@ -136,6 +155,12 @@ class MountDialog(QDialog):
             mount_point = os.path.join(user_dir, dir_name)
             self.mount_edit.setText(mount_point)
         
+    def _on_favorite_checkbox_changed(self, state):
+        """Gère le changement d'état de la case à cocher des favoris."""
+        self.save_password_checkbox.setEnabled(state == Qt.CheckState.Checked.value)
+        if not state == Qt.CheckState.Checked.value:
+            self.save_password_checkbox.setChecked(False)
+            
     def accept(self):
         """Valide et monte le volume."""
         path = self.path_edit.text()
@@ -174,7 +199,15 @@ class MountDialog(QDialog):
                 )
                 if ok and name:
                     print(f"Tentative d'ajout du favori : {name} ({path})")  # Debug
-                    if self.favorites.add_favorite(name, path, self.is_device, mount_point):
+                    # Ajouter le mot de passe si l'option est cochée
+                    save_password = self.save_password_checkbox.isChecked()
+                    if self.favorites.add_favorite(
+                        name, 
+                        path, 
+                        self.is_device, 
+                        mount_point,
+                        password if save_password else None
+                    ):
                         print("Favori ajouté avec succès")  # Debug
                         self.favorite_added = True
                     else:

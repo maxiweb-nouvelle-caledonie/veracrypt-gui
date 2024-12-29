@@ -18,6 +18,9 @@ class MountedVolumesList(QListWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
         
+        # Connecter le signal de double-clic
+        self.itemDoubleClicked.connect(self._on_double_click)
+        
         # Initialiser les icônes
         self._init_icons()
         
@@ -177,3 +180,10 @@ class MountedVolumesList(QListWidget):
                 "Erreur",
                 f"Erreur lors de la récupération des informations: {str(e)}"
             )
+
+    def _on_double_click(self, item):
+        """Gère le double-clic sur un volume."""
+        # Récupérer le point de montage
+        _, mount_point = item.data(Qt.ItemDataRole.UserRole)
+        # Ouvrir le volume
+        self._open_volume(mount_point)
