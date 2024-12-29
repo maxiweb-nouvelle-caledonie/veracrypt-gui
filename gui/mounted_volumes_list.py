@@ -5,7 +5,7 @@ Widget de liste des volumes montés.
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QMenu, QMessageBox
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon
-from src.utils import veracrypt
+from utils import veracrypt
 
 class MountedVolumesList(QListWidget):
     """Liste des volumes montés avec menu contextuel."""
@@ -21,6 +21,9 @@ class MountedVolumesList(QListWidget):
         # Initialiser les icônes
         self._init_icons()
         
+        # Ensemble des points de montage pour éviter les doublons
+        self.mounted_points = set()
+        
     def _init_icons(self):
         """Initialise les icônes pour les différents types de volumes."""
         # Icône par défaut pour les volumes
@@ -35,6 +38,13 @@ class MountedVolumesList(QListWidget):
         # Récupérer le point de montage
         _, mount_point = item.data(Qt.ItemDataRole.UserRole)
         
+        # Vérifier si le point de montage n'est pas déjà dans la liste
+        if mount_point in self.mounted_points:
+            return
+            
+        # Ajouter le point de montage à l'ensemble
+        self.mounted_points.add(mount_point)
+        
         # Déterminer l'icône appropriée
         if mount_point.startswith('/dev/'):
             item.setIcon(self.device_icon)
@@ -44,6 +54,33 @@ class MountedVolumesList(QListWidget):
         # Ajouter l'item à la liste
         super().addItem(item)
         
+    def clear(self):
+        """Surcharge de clear pour vider aussi l'ensemble des points de montage."""
+        super().clear()
+        self.mounted_points.clear()
+        
+    def refresh(self):
+        """Rafraîchit la liste des volumes montés."""
+        try:
+            # Récupérer la liste des volumes montés
+            volumes = veracrypt.list_mounted_volumes()
+            
+            # Effacer la liste actuelle
+            self.clear()
+            
+            # Ajouter chaque volume à la liste
+            for slot, mount_point in volumes:
+                item = QListWidgetItem(f"{mount_point}")
+                item.setData(Qt.ItemDataRole.UserRole, (slot, mount_point))
+                self.addItem(item)
+                
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Erreur",
+                f"Erreur lors du rafraîchissement de la liste : {str(e)}"
+            )
+            
     def _show_context_menu(self, position):
         """Affiche le menu contextuel."""
         item = self.itemAt(position)

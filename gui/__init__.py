@@ -1,7 +1,7 @@
-from src.gui.main_window import MainWindow
-from src.gui.mount_dialog import MountDialog
-from src.gui.loading_dialog import LoadingDialog
-from src.gui.device_dialog import DeviceDialog
+from gui.main_window import MainWindow
+from gui.mount_dialog import MountDialog
+from gui.loading_dialog import LoadingDialog
+from gui.device_dialog import DeviceDialog
 
 
 __all__ = [

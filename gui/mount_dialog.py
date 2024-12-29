@@ -6,85 +6,101 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit,
     QFileDialog, QMessageBox, QDialogButtonBox,
-    QInputDialog
+    QInputDialog, QCheckBox
 )
-from PyQt6.QtCore import QDir, Qt, QUrl
+from PyQt6.QtCore import QDir, Qt, QUrl, pyqtSignal
 from typing import Optional, Tuple
 import os
 from datetime import datetime
-from src.constants import Constants
-from src.utils import veracrypt, system
+from constants import Constants
+from utils import veracrypt, system
+from utils.favorites import Favorites
 import time
-from src.gui.loading_dialog import LoadingDialog
-from src.gui.device_dialog import DeviceDialog
+from gui.loading_dialog import LoadingDialog
+from gui.device_dialog import DeviceDialog
 
 class MountDialog(QDialog):
-    def __init__(self, parent=None, is_device=False):
+    # Signal émis quand un favori est ajouté
+    favorite_added = pyqtSignal()
+    
+    def __init__(self, parent=None, is_device=False, favorite_path=None):
         super().__init__(parent)
         self.is_device = is_device
+        self.favorite_path = favorite_path
+        self.favorites = Favorites()
+        self.favorite_added = False  # Pour suivre si un favori a été ajouté
         self.setup_ui()
         
     def setup_ui(self):
         """Configure l'interface utilisateur."""
-        self.setWindowTitle("Monter un volume")
+        self.setWindowTitle("Monter un volume" if not self.is_device else "Monter un périphérique")
+        self.setMinimumWidth(400)
+        
         layout = QVBoxLayout()
         
-        # Volume
-        volume_layout = QHBoxLayout()
-        volume_label = QLabel("Volume:")
-        self.volume_path = QLineEdit()
-        volume_button = QPushButton("Parcourir")
-        volume_button.clicked.connect(self._browse_volume)
-        volume_layout.addWidget(volume_label)
-        volume_layout.addWidget(self.volume_path)
-        volume_layout.addWidget(volume_button)
-        layout.addLayout(volume_layout)
+        # Chemin du volume
+        path_layout = QHBoxLayout()
+        self.path_edit = QLineEdit()
+        if self.favorite_path:
+            self.path_edit.setText(self.favorite_path)
+            self.path_edit.setReadOnly(True)
+        
+        browse_button = QPushButton("Parcourir...")
+        browse_button.clicked.connect(self.browse_volume)
+        path_layout.addWidget(QLabel("Chemin :"))
+        path_layout.addWidget(self.path_edit)
+        path_layout.addWidget(browse_button)
+        layout.addLayout(path_layout)
         
         # Point de montage
         mount_layout = QHBoxLayout()
-        mount_label = QLabel("Point de montage:")
-        self.mount_point = QLineEdit()
-        mount_button = QPushButton("Parcourir")
-        mount_button.clicked.connect(self._browse_mount_point)
-        mount_layout.addWidget(mount_label)
-        mount_layout.addWidget(self.mount_point)
+        self.mount_edit = QLineEdit()
+        
+        # Si c'est un favori, utiliser le point de montage stocké
+        if self.favorite_path:
+            favorite = self.favorites.get_favorite(self.favorite_path)
+            if favorite and 'mount_point' in favorite:
+                self.mount_edit.setText(favorite['mount_point'])
+        
+        mount_button = QPushButton("Parcourir...")
+        mount_button.clicked.connect(self.browse_mount_point)
+        mount_layout.addWidget(QLabel("Point de montage :"))
+        mount_layout.addWidget(self.mount_edit)
         mount_layout.addWidget(mount_button)
         layout.addLayout(mount_layout)
         
         # Mot de passe
         password_layout = QHBoxLayout()
-        password_label = QLabel("Mot de passe:")
-        self.password = QLineEdit()
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        password_layout.addWidget(password_label)
-        password_layout.addWidget(self.password)
+        self.password_edit = QLineEdit()
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        password_layout.addWidget(QLabel("Mot de passe :"))
+        password_layout.addWidget(self.password_edit)
         layout.addLayout(password_layout)
         
+        # Option favori (seulement si ce n'est pas un favori existant)
+        self.favorite_checkbox = QCheckBox("Ajouter aux favoris")
+        if self.favorite_path:
+            self.favorite_checkbox.setVisible(False)
+        layout.addWidget(self.favorite_checkbox)
+        
         # Boutons
-        button_layout = QHBoxLayout()
-        cancel_button = QPushButton("Annuler")
-        ok_button = QPushButton("OK")
-        cancel_button.clicked.connect(self.reject)
-        ok_button.clicked.connect(self._handle_ok)
-        button_layout.addWidget(cancel_button)
-        button_layout.addWidget(ok_button)
-        layout.addLayout(button_layout)
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
         
         self.setLayout(layout)
         
-    def _browse_volume(self):
+    def browse_volume(self):
         """Ouvre un dialogue pour sélectionner un volume."""
         if self.is_device:
             # Pour les périphériques, on utilise notre propre dialogue
             dialog = DeviceDialog(self)
             if dialog.exec():
-                self.volume_path.setText(dialog.selected_device)
-                # Créer un point de montage par défaut
-                mount_point = os.path.join(
-                    veracrypt.get_user_mount_dir(),
-                    f"veracrypt_{time.strftime('%Y%m%d_%H%M%S')}"
-                )
-                self.mount_point.setText(mount_point)
+                self.path_edit.setText(dialog.selected_device)
         else:
             # Pour les fichiers, on utilise le dialogue standard
             options = QFileDialog.Option.DontUseNativeDialog
@@ -99,9 +115,9 @@ class MountDialog(QDialog):
             )
             
             if file_name:
-                self.volume_path.setText(file_name)
-                
-    def _browse_mount_point(self):
+                self.path_edit.setText(file_name)
+
+    def browse_mount_point(self):
         """Ouvre un dialogue pour sélectionner le point de montage."""
         # Utiliser le répertoire utilisateur comme base
         user_dir = veracrypt.get_user_mount_dir()
@@ -110,7 +126,7 @@ class MountDialog(QDialog):
         dir_name, ok = QInputDialog.getText(
             self,
             "Point de montage",
-            "Nom du répertoire de montage:",
+            "Nom du répertoire de montage :",
             QLineEdit.EchoMode.Normal,
             ""
         )
@@ -118,123 +134,60 @@ class MountDialog(QDialog):
         if ok and dir_name:
             # Construire le chemin complet
             mount_point = os.path.join(user_dir, dir_name)
-            self.mount_point.setText(mount_point)
-            
-    def _get_volume_path(self) -> bool:
-        """Vérifie et retourne le chemin du volume."""
-        volume_path = self.volume_path.text().strip()
-        if not volume_path:
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Veuillez sélectionner un volume"
-            )
-            return False
-            
-        # Pour les périphériques, utiliser la validation spécifique
-        if self.is_device:
-            if not system._is_valid_device(volume_path):
-                QMessageBox.warning(
-                    self,
-                    "Erreur",
-                    f"Le périphérique {volume_path} n'est pas valide ou n'existe pas"
-                )
-                return False
-        else:
-            # Pour les fichiers, vérifier l'existence
-            if not os.path.exists(volume_path):
-                QMessageBox.warning(
-                    self,
-                    "Erreur",
-                    f"Le fichier {volume_path} n'existe pas"
-                )
-                return False
-                
-            if not os.path.isfile(volume_path):
-                QMessageBox.warning(
-                    self,
-                    "Erreur",
-                    f"{volume_path} n'est pas un fichier"
-                )
-                return False
-            
-        return True
-            
-    def _get_mount_point(self) -> bool:
-        """Vérifie et retourne le point de montage."""
-        mount_point = self.mount_point.text().strip()
+            self.mount_edit.setText(mount_point)
         
-        # Si aucun point de montage n'est spécifié
+    def accept(self):
+        """Valide et monte le volume."""
+        path = self.path_edit.text()
+        mount_point = self.mount_edit.text()
+        password = self.password_edit.text()
+        
+        if not path:
+            QMessageBox.warning(self, "Erreur", "Veuillez sélectionner un volume")
+            return
+            
         if not mount_point:
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Veuillez spécifier un point de montage"
-            )
-            return False
+            QMessageBox.warning(self, "Erreur", "Veuillez spécifier un point de montage")
+            return
+            
+        if not password:
+            QMessageBox.warning(self, "Erreur", "Veuillez entrer un mot de passe")
+            return
             
         # Vérifier le point de montage
         valid, error = veracrypt.check_mount_point(mount_point)
         if not valid:
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                error
-            )
-            return False
+            QMessageBox.warning(self, "Erreur", error)
+            return
             
-        return True
-            
-    def _get_password(self) -> bool:
-        """Vérifie et retourne le mot de passe."""
-        if not self.password.text():
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Veuillez entrer un mot de passe"
-            )
-            return False
-        return True
+        # Monter le volume
+        success, error = veracrypt.mount_volume(path, mount_point, password)
         
-    def _handle_ok(self):
-        """Gère le clic sur le bouton OK."""
-        if not self._get_volume_path():
-            return
-            
-        if not self._get_mount_point():
-            return
-            
-        if not self._get_password():
-            return
-            
-        # Montrer le loader
-        loading = LoadingDialog(self, "Montage du volume en cours...")
-        loading.show()
-        
-        try:
-            # Monter le volume
-            success, message = veracrypt.mount_volume(
-                self.volume_path.text(),
-                self.mount_point.text(),
-                self.password.text()
-            )
-            
-            if success:
-                QMessageBox.information(
+        if success:
+            # Si l'option favori est cochée et que ce n'est pas déjà un favori
+            if not self.favorite_path and self.favorite_checkbox.isChecked() and self.favorite_checkbox.isVisible():
+                # Demander le nom du favori
+                name, ok = QInputDialog.getText(
                     self,
-                    "Succès",
-                    f"Le volume {self.volume_path.text()} a été monté avec succès sur {self.mount_point.text()}"
+                    "Nom du favori",
+                    "Entrez un nom pour ce favori :"
                 )
-                self.accept()
-            else:
-                QMessageBox.critical(
-                    self,
-                    "Erreur",
-                    f"Erreur lors du montage: {message}"
-                )
-        finally:
-            loading.hide()
+                if ok and name:
+                    print(f"Tentative d'ajout du favori : {name} ({path})")  # Debug
+                    if self.favorites.add_favorite(name, path, self.is_device, mount_point):
+                        print("Favori ajouté avec succès")  # Debug
+                        self.favorite_added = True
+                    else:
+                        print("Échec de l'ajout du favori")  # Debug
+                        QMessageBox.warning(
+                            self,
+                            "Erreur",
+                            "Impossible d'ajouter le favori. Peut-être existe-t-il déjà ?"
+                        )
+            super().accept()
+        else:
+            QMessageBox.critical(self, "Erreur", f"Impossible de monter le volume : {error}")
             
-    def exec(self) -> bool:
-        """Exécute le dialogue de montage."""
-        return super().exec()
+    def was_favorite_added(self) -> bool:
+        """Retourne True si un favori a été ajouté pendant le dialogue."""
+        return self.favorite_added

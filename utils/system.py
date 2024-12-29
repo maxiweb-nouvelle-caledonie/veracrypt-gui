@@ -6,7 +6,7 @@ import os
 import subprocess
 import stat
 from typing import List, Tuple, Optional
-from src.utils.constants import Constants  # Importation correcte de Constants
+from utils.constants import Constants  # Importation correcte de Constants
 
 def _is_valid_device(path: str) -> bool:
     """Vérifie si un périphérique est valide."""

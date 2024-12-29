@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout,
     QPushButton, QListWidget, QMessageBox
 )
-from src.utils import system
+from utils import system
 
 class DeviceDialog(QDialog):
     def __init__(self, parent=None):

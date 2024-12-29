@@ -1,0 +1,45 @@
+# Environnements virtuels
+venv/
+env/
+ENV/
+.venv/
+.pyvenv/
+
+# Fichiers Python compilés
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Fichiers de log
+*.log
+
+# Fichiers de configuration locaux
+*.local
+*.env
+
+# Fichiers de base de données SQLite
+*.sqlite3
+
+# IDE et éditeurs de texte
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Système d'exploitation
+.DS_Store
+Thumbs.db
+
+# Exécutables et builds
+dist/
+build/
+*.exe
+*.dmg
+*.AppImage
+
+# Fichiers temporaires
+*.tmp
+*.temp
+
+# Fichiers de cache
+.cache/

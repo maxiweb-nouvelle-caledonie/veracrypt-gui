@@ -3,8 +3,8 @@ Dialogue de démontage pour les volumes VeraCrypt.
 """
 
 from PyQt6.QtWidgets import QDialog, QInputDialog, QMessageBox
-from src.utils import veracrypt, system
-from src.constants import Constants
+from utils import veracrypt, system
+from constants import Constants
 
 class UnmountDialog(QDialog):
     def __init__(self, parent=None):

@@ -6,22 +6,25 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, 
     QPushButton, QLabel, QTextEdit,
     QHBoxLayout, QFrame, QMessageBox,
-    QSplitter, QListWidget, QListWidgetItem
+    QSplitter, QListWidget, QListWidgetItem,
+    QMenu
 )
 from PyQt6.QtCore import Qt
-from src.gui.mount_dialog import MountDialog
-from src.gui.loading_dialog import LoadingDialog
-from src.gui.mounted_volumes_list import MountedVolumesList
-from src.utils import veracrypt, system
-from src.utils.sudo_session import sudo_session
-from src.constants import Constants
+from gui.mount_dialog import MountDialog
+from gui.loading_dialog import LoadingDialog
+from gui.mounted_volumes_list import MountedVolumesList
+from utils import veracrypt, system
+from utils.sudo_session import sudo_session
+from utils.favorites import Favorites
+from constants import Constants
 import sys
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.loading_dialog = None
-        self.initUI()
+        self.favorites = Favorites()
+        self.setup_ui()
         
         # Initialiser la session sudo
         self.log_message("Initialisation de la session sudo...")
@@ -37,219 +40,159 @@ class MainWindow(QMainWindow):
         self.log_message("Session sudo initialisée avec succès")
         self._load_mounted_volumes()  # Chargement initial des volumes montés
 
-    def initUI(self):
-        """Initialise l'interface utilisateur."""
-        self.setWindowTitle('VeraCrypt Manager')
-        self.setGeometry(100, 100, 1000, 600)
-
+    def setup_ui(self):
+        """Configure l'interface utilisateur."""
+        self.setWindowTitle("VeraCrypt GUI")
+        self.setMinimumSize(800, 600)
+        
+        # Widget central
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        # Layout principal vertical
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setSpacing(0)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Boutons en haut
+        # Layout principal
+        main_layout = QHBoxLayout()
+        central_widget.setLayout(main_layout)
+        
+        # Panneau de gauche (favoris)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout()
+        left_panel.setLayout(left_layout)
+        
+        # Liste des favoris
+        favorites_label = QLabel("Favoris")
+        left_layout.addWidget(favorites_label)
+        
+        self.favorites_list = QListWidget()
+        self.favorites_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.favorites_list.customContextMenuRequested.connect(self._show_favorite_context_menu)
+        self.favorites_list.itemDoubleClicked.connect(self._mount_favorite)
+        left_layout.addWidget(self.favorites_list)
+        
+        main_layout.addWidget(left_panel)
+        
+        # Panneau de droite
+        right_panel = QWidget()
+        right_layout = QVBoxLayout()
+        right_panel.setLayout(right_layout)
+        
+        # Boutons d'action
         button_layout = QHBoxLayout()
-        self._add_buttons(button_layout)
-        main_layout.addLayout(button_layout)
         
-        # Splitter horizontal pour les colonnes redimensionnables
-        splitter = QSplitter()
-        main_layout.addWidget(splitter)
+        mount_file_button = QPushButton("Monter un fichier")
+        mount_file_button.clicked.connect(lambda: self._show_mount_dialog(False))
+        button_layout.addWidget(mount_file_button)
         
-        # Colonne de gauche : Liste des volumes montés
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(5, 5, 5, 5)
+        mount_device_button = QPushButton("Monter un périphérique")
+        mount_device_button.clicked.connect(lambda: self._show_mount_dialog(True))
+        button_layout.addWidget(mount_device_button)
         
-        volumes_label = QLabel('Volumes Montés')
-        volumes_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        left_layout.addWidget(volumes_label)
+        right_layout.addLayout(button_layout)
         
-        self.mounted_volumes_list = MountedVolumesList(self)
-        self.mounted_volumes_list.volume_unmounted.connect(self._on_volume_unmounted)
-        left_layout.addWidget(self.mounted_volumes_list)
+        # Liste des volumes montés
+        mounted_label = QLabel("Volumes montés")
+        right_layout.addWidget(mounted_label)
         
-        left_widget.setLayout(left_layout)
-        splitter.addWidget(left_widget)
-        
-        # Colonne de droite : Zone de logs
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(5, 5, 5, 5)
-        
-        # Titre
-        title = QLabel('VeraCrypt Manager')
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        right_layout.addWidget(title)
+        self.mounted_list = MountedVolumesList(self)
+        self.mounted_list.volume_unmounted.connect(self._on_volume_unmounted)
+        right_layout.addWidget(self.mounted_list)
         
         # Zone de logs
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
         right_layout.addWidget(self.log_area)
         
-        right_widget.setLayout(right_layout)
-        splitter.addWidget(right_widget)
+        main_layout.addWidget(right_panel)
         
-        # Définir les tailles initiales des colonnes (50% chacune)
-        splitter.setSizes([400, 600])
+        # Rafraîchir les listes
+        self._refresh_favorites()
+        self._refresh_mounted_volumes()
         
-    def _add_buttons(self, layout):
-        """Ajoute les boutons à l'interface."""
-        self.mount_file_button = QPushButton("Monter un fichier")
-        self.mount_device_button = QPushButton("Monter un périphérique")
-        self.unmount_button = QPushButton("Démonter un volume")
-        self.test_button = QPushButton("Tester VeraCrypt List")
-        self.cleanup_button = QPushButton("Nettoyer les points de montage")
+    def _show_mount_dialog(self, is_device: bool, favorite_path: str = None):
+        """Affiche le dialogue de montage."""
+        dialog = MountDialog(self, is_device, favorite_path)
+        result = dialog.exec()
+        self.log_message(f"Résultat du dialogue : {result}")
         
-        # Ajouter les boutons au layout
-        layout.addWidget(self.mount_file_button)
-        layout.addWidget(self.mount_device_button)
-        layout.addWidget(self.unmount_button)
-        layout.addWidget(self.test_button)
-        layout.addWidget(self.cleanup_button)
+        if result:
+            self.log_message("Dialogue de montage fermé avec succès")
+            self._refresh_mounted_volumes()
+            
+            # Vérifier si un favori a été ajouté
+            was_added = dialog.was_favorite_added()
+            self.log_message(f"Favori ajouté ? {was_added}")
+            
+            if was_added:
+                self.log_message("Un favori a été ajouté, rafraîchissement de la liste")
+                # Recharger les favoris depuis le fichier
+                self.favorites = Favorites()
+                self._refresh_favorites()
+            else:
+                self.log_message("Aucun favori n'a été ajouté")
+            
+    def _show_favorite_context_menu(self, position):
+        """Affiche le menu contextuel pour un favori."""
+        item = self.favorites_list.itemAt(position)
+        if item is None:
+            return
+            
+        menu = QMenu()
+        mount_action = menu.addAction("Monter")
+        remove_action = menu.addAction("Supprimer")
         
-        # Connecter les signaux
-        self.mount_file_button.clicked.connect(self._mount_file)
-        self.mount_device_button.clicked.connect(self._mount_device)
-        self.unmount_button.clicked.connect(self._on_unmount_volume)
-        self.test_button.clicked.connect(self._test_veracrypt_list)
-        self.cleanup_button.clicked.connect(self._cleanup_mount_points)
+        action = menu.exec(self.favorites_list.mapToGlobal(position))
+        if action == mount_action:
+            self._mount_favorite(item)
+        elif action == remove_action:
+            self._remove_favorite(item)
+            
+    def _mount_favorite(self, item):
+        """Monte un volume favori."""
+        favorite = item.data(Qt.ItemDataRole.UserRole)
+        self._show_mount_dialog(favorite['is_device'], favorite['volume_path'])
+        
+    def _remove_favorite(self, item):
+        """Supprime un favori."""
+        favorite = item.data(Qt.ItemDataRole.UserRole)
+        if self.favorites.remove_favorite(favorite['volume_path']):
+            self._refresh_favorites()
+            
+    def _refresh_favorites(self):
+        """Rafraîchit la liste des favoris."""
+        self.log_message("Début du rafraîchissement des favoris")
+        self.favorites_list.clear()
+        favorites = self.favorites.get_favorites()
+        self.log_message(f"Nombre de favoris trouvés : {len(favorites)}")
+        
+        for favorite in favorites:
+            self.log_message(f"Ajout du favori : {favorite['name']} ({favorite['volume_path']})")
+            item = QListWidgetItem(favorite['name'])
+            item.setData(Qt.ItemDataRole.UserRole, favorite)
+            self.favorites_list.addItem(item)
+            
+        self.log_message("Fin du rafraîchissement des favoris")
+            
+    def _refresh_mounted_volumes(self):
+        """Rafraîchit la liste des volumes montés."""
+        try:
+            volumes = veracrypt.list_mounted_volumes()
+            self.mounted_list.clear()
+            
+            for slot, mount_point in volumes:
+                item = QListWidgetItem(f"{mount_point}")
+                item.setData(Qt.ItemDataRole.UserRole, (slot, mount_point))
+                self.mounted_list.addItem(item)
+                
+        except Exception as e:
+            self.log_message(f"Erreur lors du rafraîchissement des volumes montés : {str(e)}")
+            
+    def _on_volume_unmounted(self, mount_point: str):
+        """Appelé quand un volume est démonté."""
+        self._refresh_mounted_volumes()
+        self.log_message(f"Volume démonté : {mount_point}")
 
     def log_message(self, message: str):
         """Ajoute un message dans la zone de logs."""
         self.log_area.append(message)
-
-    def _mount_file(self):
-        """Gère le montage d'un fichier."""
-        dialog = MountDialog(self, is_device=False)
-        self._center_dialog(dialog)
-        if dialog.exec():
-            self.log_message("Montage du fichier terminé")
-            self._refresh_mounted_volumes()
-
-    def _mount_device(self):
-        """Gère le montage d'un périphérique."""
-        dialog = MountDialog(self, is_device=True)
-        self._center_dialog(dialog)
-        if dialog.exec():
-            self.log_message("Montage du périphérique terminé")
-            self._refresh_mounted_volumes()
-
-    def _refresh_mounted_volumes(self):
-        """Rafraîchit la liste des volumes montés."""
-        try:
-            self.log_message("Rafraîchissement de la liste des volumes montés...")
-            volumes = veracrypt.list_mounted_volumes()
-            
-            # Effacer la liste actuelle
-            self.mounted_volumes_list.clear()
-            
-            if not volumes:
-                self.log_message("Aucun volume monté")
-                return
-                
-            # Ajouter les volumes à la liste
-            for slot, mount_point in volumes:
-                item = QListWidgetItem(f"{mount_point}")
-                item.setData(Qt.ItemDataRole.UserRole, (slot, mount_point))
-                self.mounted_volumes_list.addItem(item)
-                
-            self.log_message(f"Volumes chargés: {volumes}")
-            
-        except Exception as e:
-            self.log_message(f"Erreur lors du rafraîchissement: {str(e)}")
-            
-    def _on_unmount_volume(self):
-        """Appelé quand on clique sur le bouton de démontage."""
-        # Récupérer le volume sélectionné
-        current = self.mounted_volumes_list.currentItem()
-        if not current:
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Veuillez sélectionner un volume à démonter"
-            )
-            return
-            
-        # Récupérer le point de montage
-        _, mount_point = current.data(Qt.ItemDataRole.UserRole)
-        
-        # Démonter le volume
-        success, error = veracrypt.unmount_volume(mount_point)
-        
-        if success:
-            QMessageBox.information(
-                self,
-                "Succès",
-                f"Le volume {mount_point} a été démonté avec succès"
-            )
-            # Rafraîchir la liste après le démontage
-            self._refresh_mounted_volumes()
-        else:
-            QMessageBox.critical(
-                self,
-                "Erreur",
-                f"Erreur lors du démontage: {error}"
-            )
-
-    def _on_volume_unmounted(self, mount_point: str):
-        """Appelé quand un volume est démonté depuis la liste."""
-        self.log_message(f"Signal de démontage reçu pour: {mount_point}")
-        self._refresh_mounted_volumes()
-
-    def _test_veracrypt_list(self):
-        """Teste la commande veracrypt --list."""
-        self.show_loading("Test de veracrypt --list...")
-        try:
-            success, stdout, stderr = veracrypt.run_veracrypt_command([
-                system.Constants.VERACRYPT_PATH,
-                '--text',
-                '--non-interactive',
-                '--test'
-            ])
-            
-            if success:
-                self.log_message("Auto-tests de tous les algorithmes réussis")
-            else:
-                self.log_message(f"Erreur:\n{stderr}")
-                
-            self._refresh_mounted_volumes()
-        except Exception as e:
-            self.log_message(f"Erreur lors du test: {str(e)}")
-        finally:
-            self.hide_loading()
-
-    def _cleanup_mount_points(self):
-        """Nettoie les points de montage."""
-        self.show_loading("Nettoyage des points de montage...")
-        try:
-            # Démonter tous les volumes
-            volumes = veracrypt.list_mounted_volumes()
-            for slot, mount_point in volumes:
-                success, error = veracrypt.unmount_volume(mount_point)
-                if not success:
-                    self.log_message(f"Erreur lors du démontage de {mount_point}: {error}")
-                    
-            # Rafraîchir la liste
-            self._refresh_mounted_volumes()
-            
-            QMessageBox.information(
-                self,
-                "Succès",
-                "Nettoyage des points de montage terminé"
-            )
-        except Exception as e:
-            self.log_message(f"Erreur lors du nettoyage: {str(e)}")
-            QMessageBox.critical(
-                self,
-                "Erreur",
-                f"Erreur lors du nettoyage:\n{str(e)}"
-            )
-        finally:
-            self.hide_loading()
 
     def _load_mounted_volumes(self):
         """Charge la liste des volumes montés."""
@@ -261,7 +204,7 @@ class MainWindow(QMainWindow):
             for slot, mount_point in volumes:
                 item = QListWidgetItem(f"{mount_point}")
                 item.setData(Qt.ItemDataRole.UserRole, (slot, mount_point))
-                self.mounted_volumes_list.addItem(item)
+                self.mounted_list.addItem(item)
                 
             self.log_message(f"Volumes chargés: {volumes}")
         except Exception as e:
@@ -299,11 +242,7 @@ class MainWindow(QMainWindow):
         # Déplacer le dialogue
         dialog.move(x, y)
 
-    def _show_message(self, title: str, message: str, icon: QMessageBox.Icon = QMessageBox.Icon.Information):
-        """Affiche une boîte de dialogue centrée."""
-        msg_box = QMessageBox(self)
-        msg_box.setIcon(icon)
-        msg_box.setWindowTitle(title)
-        msg_box.setText(message)
-        self._center_dialog(msg_box)
-        msg_box.exec()
+    def _on_favorite_added(self):
+        """Appelé quand un favori est ajouté."""
+        self._refresh_favorites()
+        self.log_message("Favori ajouté avec succès")
