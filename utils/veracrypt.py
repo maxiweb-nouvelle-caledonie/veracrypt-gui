@@ -153,6 +153,56 @@ def list_mounted_volumes() -> List[Tuple[str, str]]:
         print(f"Erreur lors de la liste des volumes: {str(e)}")
         return []
 
+def check_mount_points() -> List[Tuple[str, str]]:
+    """Vérifie l'intégrité des points de montage.
+    
+    Returns:
+        Liste de tuples (point de montage, erreur)
+    """
+    issues = []
+    mounted_volumes = list_mounted_volumes()
+    
+    # Récupérer tous les points de montage
+    mount_points = [mount_point for _, mount_point in mounted_volumes]
+    
+    # Vérifier chaque point de montage
+    for _, mount_point in mounted_volumes:
+        # Vérifier si le point de montage existe
+        if not os.path.exists(mount_point):
+            issues.append((mount_point, "Le point de montage n'existe pas"))
+            continue
+            
+        # Vérifier si le point de montage est accessible
+        try:
+            os.listdir(mount_point)
+        except Exception as e:
+            issues.append((mount_point, f"Le point de montage n'est pas accessible : {str(e)}"))
+            
+    return issues
+
+def clean_empty_mount_points() -> List[str]:
+    """Nettoie les points de montage vides.
+    
+    Returns:
+        Liste des points de montage nettoyés
+    """
+    cleaned = []
+    user_dir = get_user_mount_dir()
+    
+    # Parcourir les répertoires de montage
+    for item in os.listdir(user_dir):
+        mount_point = os.path.join(user_dir, item)
+        if os.path.isdir(mount_point) and item.startswith("veracrypt_"):
+            try:
+                # Vérifier si le répertoire est vide et n'est pas monté
+                if not os.listdir(mount_point) and not any(mp == mount_point for _, mp in list_mounted_volumes()):
+                    os.rmdir(mount_point)
+                    cleaned.append(mount_point)
+            except Exception as e:
+                print(f"Erreur lors du nettoyage de {mount_point}: {e}")
+                
+    return cleaned
+
 def mount_volume(volume_path: str, mount_point: str, password: str) -> Tuple[bool, str]:
     """Monte un volume VeraCrypt.
     

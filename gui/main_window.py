@@ -7,17 +7,19 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QTextEdit,
     QHBoxLayout, QFrame, QMessageBox,
     QSplitter, QListWidget, QListWidgetItem,
-    QMenu
+    QMenu, QApplication
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QAction
 from gui.mount_dialog import MountDialog
 from gui.loading_dialog import LoadingDialog
 from gui.mounted_volumes_list import MountedVolumesList
+from gui.preferences_dialog import PreferencesDialog
 from utils import veracrypt, system
 from utils.sudo_session import sudo_session
 from utils.favorites import Favorites
-from constants import Constants
+from utils.preferences import preferences
+from utils.themes import apply_theme
 import sys
 
 class MainWindow(QMainWindow):
@@ -25,6 +27,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.loading_dialog = None
         self.favorites = Favorites()
+        self.preferences = preferences
+        
+        # Appliquer le thème
+        apply_theme(QApplication.instance(), self.preferences.get('theme'))
         
         # Initialiser les icônes
         self._init_icons()
@@ -169,6 +175,27 @@ class MainWindow(QMainWindow):
             no_favorites.setEnabled(False)
             favorites_menu.addAction(no_favorites)
             
+        # Menu Options
+        options_menu = menubar.addMenu("Options")
+        
+        # Action Nettoyer les points de montage vides
+        clean_action = QAction("Nettoyer les points de montage vides", self)
+        clean_action.triggered.connect(self._clean_mount_points)
+        options_menu.addAction(clean_action)
+        
+        # Action Vérifier l'intégrité des points de montage
+        check_action = QAction("Vérifier l'intégrité des points de montage", self)
+        check_action.triggered.connect(self._check_mount_points)
+        options_menu.addAction(check_action)
+        
+        # Séparateur
+        options_menu.addSeparator()
+        
+        # Action Préférences
+        preferences_action = QAction("Préférences...", self)
+        preferences_action.triggered.connect(self._show_preferences)
+        options_menu.addAction(preferences_action)
+        
         # Action Quitter (directement dans la barre de menu)
         quit_action = QAction("Quitter", self)
         quit_action.triggered.connect(self.close)
@@ -427,3 +454,50 @@ class MainWindow(QMainWindow):
         """Appelé quand un favori est ajouté."""
         self._refresh_favorites()
         self.log_message("Favori ajouté avec succès")
+
+    def _clean_mount_points(self):
+        """Nettoie les points de montage vides."""
+        cleaned = veracrypt.clean_empty_mount_points()
+        if cleaned:
+            self.log_message(f"Points de montage nettoyés : {', '.join(cleaned)}")
+            QMessageBox.information(
+                self,
+                "Points de montage nettoyés",
+                f"Les points de montage suivants ont été nettoyés :\n{chr(10).join(cleaned)}"
+            )
+        else:
+            self.log_message("Aucun point de montage à nettoyer")
+            QMessageBox.information(
+                self,
+                "Points de montage",
+                "Aucun point de montage vide à nettoyer"
+            )
+            
+    def _check_mount_points(self):
+        """Vérifie l'intégrité des points de montage."""
+        issues = veracrypt.check_mount_points()
+        if issues:
+            self.log_message(f"Problèmes détectés : {issues}")
+            message = "Les problèmes suivants ont été détectés :\n\n"
+            for mount_point, error in issues:
+                message += f"• {mount_point} : {error}\n"
+            QMessageBox.warning(
+                self,
+                "Problèmes détectés",
+                message
+            )
+        else:
+            self.log_message("Aucun problème détecté")
+            QMessageBox.information(
+                self,
+                "Points de montage",
+                "Tous les points de montage sont valides"
+            )
+            
+    def _show_preferences(self):
+        """Affiche le dialogue des préférences."""
+        dialog = PreferencesDialog(self)
+        if dialog.exec():
+            # Appliquer le thème si nécessaire
+            apply_theme(QApplication.instance(), self.preferences.get('theme'))
+            self.log_message("Préférences mises à jour")
