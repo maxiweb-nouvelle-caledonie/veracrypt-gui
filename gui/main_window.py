@@ -15,6 +15,7 @@ from gui.mount_dialog import MountDialog
 from gui.loading_dialog import LoadingDialog
 from gui.mounted_volumes_list import MountedVolumesList
 from gui.preferences_dialog import PreferencesDialog
+from gui.create_volume_wizard import CreateVolumeWizard
 from utils import veracrypt, system
 from utils.sudo_session import sudo_session
 from utils.favorites import Favorites
@@ -138,18 +139,25 @@ class MainWindow(QMainWindow):
         """Configure la barre de menu."""
         menubar = self.menuBar()
         
-        # Menu Monter
-        mount_menu = menubar.addMenu("Monter")
+        # Menu Volumes
+        volumes_menu = menubar.addMenu("Volumes")
+        
+        # Action Créer un volume
+        create_volume_action = QAction("Créer un nouveau volume...", self)
+        create_volume_action.triggered.connect(self._show_create_volume_wizard)
+        volumes_menu.addAction(create_volume_action)
+        
+        volumes_menu.addSeparator()
         
         # Action Monter un fichier
-        mount_file_action = QAction(self.file_icon, "Fichier...", self)
+        mount_file_action = QAction(self.file_icon, "Monter un fichier...", self)
         mount_file_action.triggered.connect(lambda: self._show_mount_dialog(False))
-        mount_menu.addAction(mount_file_action)
+        volumes_menu.addAction(mount_file_action)
         
         # Action Monter un périphérique
-        mount_device_action = QAction(self.device_icon, "Périphérique...", self)
+        mount_device_action = QAction(self.device_icon, "Monter un périphérique...", self)
         mount_device_action.triggered.connect(lambda: self._show_mount_dialog(True))
-        mount_menu.addAction(mount_device_action)
+        volumes_menu.addAction(mount_device_action)
         
         # Menu Favoris
         favorites_menu = menubar.addMenu("Favoris")
@@ -501,3 +509,8 @@ class MainWindow(QMainWindow):
             # Appliquer le thème si nécessaire
             apply_theme(QApplication.instance(), self.preferences.get('theme'))
             self.log_message("Préférences mises à jour")
+
+    def _show_create_volume_wizard(self):
+        """Affiche l'assistant de création de volume."""
+        wizard = CreateVolumeWizard(self)
+        wizard.exec()
