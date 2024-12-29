@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QMenu
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon, QAction
 from gui.mount_dialog import MountDialog
 from gui.loading_dialog import LoadingDialog
 from gui.mounted_volumes_list import MountedVolumesList
@@ -24,6 +25,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.loading_dialog = None
         self.favorites = Favorites()
+        
+        # Initialiser les icônes
+        self._init_icons()
+        
         self.setup_ui()
         
         # Initialiser la session sudo
@@ -39,11 +44,23 @@ class MainWindow(QMainWindow):
             
         self.log_message("Session sudo initialisée avec succès")
         self._load_mounted_volumes()  # Chargement initial des volumes montés
-
+        
+    def _init_icons(self):
+        """Initialise les icônes."""
+        # Icône par défaut pour les volumes
+        self.volume_icon = QIcon.fromTheme('drive-harddisk')
+        # Icône pour les périphériques
+        self.device_icon = QIcon.fromTheme('drive-removable-media')
+        # Icône pour les fichiers
+        self.file_icon = QIcon.fromTheme('media-flash')
+        
     def setup_ui(self):
         """Configure l'interface utilisateur."""
         self.setWindowTitle("VeraCrypt GUI")
         self.setMinimumSize(800, 600)
+        
+        # Créer la barre de menu
+        self._setup_menu_bar()
         
         # Widget central
         central_widget = QWidget()
@@ -78,11 +95,15 @@ class MainWindow(QMainWindow):
         # Boutons d'action
         button_layout = QHBoxLayout()
         
-        mount_file_button = QPushButton("Monter un fichier")
+        mount_file_button = QPushButton()
+        mount_file_button.setIcon(self.file_icon)
+        mount_file_button.setText("Monter un fichier")
         mount_file_button.clicked.connect(lambda: self._show_mount_dialog(False))
         button_layout.addWidget(mount_file_button)
         
-        mount_device_button = QPushButton("Monter un périphérique")
+        mount_device_button = QPushButton()
+        mount_device_button.setIcon(self.device_icon)
+        mount_device_button.setText("Monter un périphérique")
         mount_device_button.clicked.connect(lambda: self._show_mount_dialog(True))
         button_layout.addWidget(mount_device_button)
         
@@ -107,6 +128,49 @@ class MainWindow(QMainWindow):
         self._refresh_favorites()
         self._refresh_mounted_volumes()
         
+    def _setup_menu_bar(self):
+        """Configure la barre de menu."""
+        menubar = self.menuBar()
+        
+        # Menu Monter
+        mount_menu = menubar.addMenu("Monter")
+        
+        # Action Monter un fichier
+        mount_file_action = QAction(self.file_icon, "Fichier...", self)
+        mount_file_action.triggered.connect(lambda: self._show_mount_dialog(False))
+        mount_menu.addAction(mount_file_action)
+        
+        # Action Monter un périphérique
+        mount_device_action = QAction(self.device_icon, "Périphérique...", self)
+        mount_device_action.triggered.connect(lambda: self._show_mount_dialog(True))
+        mount_menu.addAction(mount_device_action)
+        
+        # Menu Favoris
+        favorites_menu = menubar.addMenu("Favoris")
+        
+        # Ajouter les favoris au menu
+        for favorite in self.favorites.get_favorites():
+            action = QAction(
+                self.device_icon if favorite['is_device'] else self.file_icon,
+                favorite['name'],
+                self
+            )
+            action.triggered.connect(
+                lambda checked, f=favorite: self._show_mount_dialog(f['is_device'], f['volume_path'])
+            )
+            favorites_menu.addAction(action)
+            
+        # Si aucun favori, ajouter une action désactivée
+        if not self.favorites.get_favorites():
+            no_favorites = QAction("Aucun favori", self)
+            no_favorites.setEnabled(False)
+            favorites_menu.addAction(no_favorites)
+            
+        # Action Quitter (directement dans la barre de menu)
+        quit_action = QAction("Quitter", self)
+        quit_action.triggered.connect(self.close)
+        menubar.addAction(quit_action)
+            
     def _show_mount_dialog(self, is_device: bool, favorite_path: str = None):
         """Affiche le dialogue de montage."""
         dialog = MountDialog(self, is_device, favorite_path)
@@ -159,6 +223,8 @@ class MainWindow(QMainWindow):
     def _refresh_favorites(self):
         """Rafraîchit la liste des favoris."""
         self.log_message("Début du rafraîchissement des favoris")
+        
+        # Rafraîchir la liste
         self.favorites_list.clear()
         favorites = self.favorites.get_favorites()
         self.log_message(f"Nombre de favoris trouvés : {len(favorites)}")
@@ -167,10 +233,48 @@ class MainWindow(QMainWindow):
             self.log_message(f"Ajout du favori : {favorite['name']} ({favorite['volume_path']})")
             item = QListWidgetItem(favorite['name'])
             item.setData(Qt.ItemDataRole.UserRole, favorite)
+            
+            # Ajouter l'icône appropriée selon le type
+            if favorite['is_device']:
+                item.setIcon(self.device_icon)
+            else:
+                item.setIcon(self.file_icon)
+                
             self.favorites_list.addItem(item)
             
+        # Rafraîchir le menu des favoris
+        self._refresh_favorites_menu()
+        
         self.log_message("Fin du rafraîchissement des favoris")
-            
+        
+    def _refresh_favorites_menu(self):
+        """Rafraîchit le menu des favoris."""
+        # Trouver le menu des favoris
+        for action in self.menuBar().actions():
+            if action.text() == "Favoris":
+                favorites_menu = action.menu()
+                # Effacer le menu
+                favorites_menu.clear()
+                
+                # Ajouter les favoris au menu
+                for favorite in self.favorites.get_favorites():
+                    action = QAction(
+                        self.device_icon if favorite['is_device'] else self.file_icon,
+                        favorite['name'],
+                        self
+                    )
+                    action.triggered.connect(
+                        lambda checked, f=favorite: self._show_mount_dialog(f['is_device'], f['volume_path'])
+                    )
+                    favorites_menu.addAction(action)
+                
+                # Si aucun favori, ajouter une action désactivée
+                if not self.favorites.get_favorites():
+                    no_favorites = QAction("Aucun favori", self)
+                    no_favorites.setEnabled(False)
+                    favorites_menu.addAction(no_favorites)
+                break
+        
     def _refresh_mounted_volumes(self):
         """Rafraîchit la liste des volumes montés."""
         try:
