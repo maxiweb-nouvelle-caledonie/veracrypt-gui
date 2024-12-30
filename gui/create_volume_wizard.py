@@ -20,10 +20,13 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QWidget
 )
-from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot
+from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot, QThread
 from PyQt6.QtGui import QIcon
-from utils import VolumeCreation, EntropyCollector
 from .progress_dialog import ProgressDialog
+from utils.volume_creation import VolumeCreation
+from utils.veracrypt import mount_volume
+from utils.constants import Constants
+from utils import EntropyCollector
 
 class CreateVolumeWizard(QWizard):
     # Pages du wizard
@@ -45,6 +48,7 @@ class CreateVolumeWizard(QWizard):
         self.hash_algo = None
         self.filesystem = None
         self.random_data = None
+        self.progress_dialog = None
         
         # Ajouter les pages
         self.setPage(self.PAGE_VOLUME, VolumePage(self))
@@ -67,8 +71,8 @@ class CreateVolumeWizard(QWizard):
         password = self.password
         
         # Créer la boîte de dialogue de progression
-        progress = ProgressDialog(self)
-        progress.show()
+        self.progress_dialog = ProgressDialog(self)
+        self.progress_dialog.show()
         
         # Créer le volume
         def create_volume():
@@ -80,11 +84,11 @@ class CreateVolumeWizard(QWizard):
                 hash_algo=hash_algo,
                 filesystem=filesystem,
                 random_data=self.random_data,
-                progress_callback=progress.update_progress
+                progress_callback=self.progress_dialog.update_progress
             )
             
             # Mettre à jour la boîte de dialogue
-            progress.done(success)
+            self.progress_dialog.done(success)
             
             # Utiliser invokeMethod pour appeler les méthodes Qt depuis le thread
             if success:
@@ -95,7 +99,6 @@ class CreateVolumeWizard(QWizard):
                 QMetaObject.invokeMethod(self, "show_error", 
                                        Qt.ConnectionType.QueuedConnection,
                                        Q_ARG(str, message))
-                progress.close()
         
         # Lancer la création dans un thread séparé
         from PyQt6.QtCore import QThread
@@ -107,17 +110,56 @@ class CreateVolumeWizard(QWizard):
         self.creation_thread = CreationThread()
         self.creation_thread.start()
     
+    def _generate_mount_point(self):
+        """Génère un point de montage unique."""
+        # Récupérer le nom du volume sans extension
+        base_name = os.path.splitext(os.path.basename(self.volume_path))[0]
+        
+        # Utiliser le répertoire personnel de l'utilisateur
+        base_dir = os.path.expanduser("~")
+        
+        # Créer le point de montage de base
+        mount_point = os.path.join(base_dir, f"{Constants.MOUNT_PREFIX}{base_name}")
+        
+        # Si le point de montage existe déjà, ajouter un numéro
+        counter = 1
+        while os.path.exists(mount_point):
+            mount_point = os.path.join(base_dir,
+                                     f"{Constants.MOUNT_PREFIX}{base_name}_{counter}")
+            counter += 1
+            
+        # Créer le répertoire s'il n'existe pas
+        os.makedirs(mount_point, exist_ok=True)
+        
+        return mount_point
+
+    def mount_volume_after_creation(self):
+        """Monte le volume après sa création."""
+        # Générer un point de montage unique
+        mount_point = self._generate_mount_point()
+        
+        # Monter le volume
+        success, message = mount_volume(self.volume_path, mount_point, self.password)
+        if success:
+            # Rafraîchir la liste des volumes montés
+            if hasattr(self.parent(), '_refresh_mounted_volumes'):
+                self.parent()._refresh_mounted_volumes()
+        else:
+            QMessageBox.warning(self, "Erreur de montage", 
+                              f"Le volume a été créé mais n'a pas pu être monté :\n{message}")
+
     @pyqtSlot(str)
     def show_success_and_close(self, message):
         """Affiche le message de succès et ferme le wizard."""
         QMessageBox.information(self, "Succès", message)
+        # Monter le volume après la création
+        self.mount_volume_after_creation()
         super().accept()
     
     @pyqtSlot(str)
     def show_error(self, message):
         """Affiche le message d'erreur."""
         QMessageBox.critical(self, "Erreur", message)
-        progress.close()
 
 class EntropyPage(QWizardPage):
     """Page de collecte d'entropie."""

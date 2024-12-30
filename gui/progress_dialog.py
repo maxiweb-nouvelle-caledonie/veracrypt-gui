@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QProgressBar, QPushButton
 from PyQt6.QtCore import Qt, QTimer, QMetaObject, Q_ARG, pyqtSlot
 
 class ProgressDialog(QDialog):
@@ -25,6 +25,12 @@ class ProgressDialog(QDialog):
         self.speed_label = QLabel()
         layout.addWidget(self.speed_label)
         
+        # Bouton pour forcer la fermeture
+        self.force_close_button = QPushButton("Fermer")
+        self.force_close_button.clicked.connect(self.force_close)
+        self.force_close_button.setVisible(False)  # Caché par défaut
+        layout.addWidget(self.force_close_button)
+        
         self.setLayout(layout)
         
         # Timer pour mettre à jour l'interface
@@ -39,6 +45,8 @@ class ProgressDialog(QDialog):
     def update_status(self, text):
         """Met à jour le texte de statut."""
         self.status_label.setText(text)
+        if text in ["Volume créé avec succès !", "Erreur lors de la création du volume"]:
+            self.timer.stop()
     
     @pyqtSlot()
     def stop_timer(self):
@@ -48,7 +56,7 @@ class ProgressDialog(QDialog):
     @pyqtSlot()
     def close_dialog(self):
         """Ferme la boîte de dialogue."""
-        self.accept()
+        self.close()
     
     @pyqtSlot(int)
     def set_progress(self, value):
@@ -96,10 +104,6 @@ class ProgressDialog(QDialog):
         
     def done(self, success: bool):
         """Appelé quand la création est terminée."""
-        # Arrêter le timer dans le thread principal
-        QMetaObject.invokeMethod(self, "stop_timer", 
-                               Qt.ConnectionType.QueuedConnection)
-        
         if success:
             QMetaObject.invokeMethod(self, "update_status", 
                                    Qt.ConnectionType.QueuedConnection,
@@ -107,15 +111,25 @@ class ProgressDialog(QDialog):
             QMetaObject.invokeMethod(self, "set_progress", 
                                    Qt.ConnectionType.QueuedConnection,
                                    Q_ARG(int, 100))
+            QMetaObject.invokeMethod(self, "force_close",
+                                   Qt.ConnectionType.QueuedConnection)
         else:
-            QMetaObject.invokeMethod(self, "update_status", 
+            QMetaObject.invokeMethod(self, "update_status",
                                    Qt.ConnectionType.QueuedConnection,
                                    Q_ARG(str, "Erreur lors de la création du volume"))
-            
-        QMetaObject.invokeMethod(self, "set_speed", 
-                               Qt.ConnectionType.QueuedConnection,
-                               Q_ARG(str, ""))
+            QMetaObject.invokeMethod(self, "force_close",
+                                   Qt.ConnectionType.QueuedConnection)
         
-        # Fermer la boîte de dialogue après un court délai
-        QMetaObject.invokeMethod(self, "close_dialog", 
-                               Qt.ConnectionType.QueuedConnection)
+    @pyqtSlot()
+    def force_close(self):
+        """Force la fermeture de la fenêtre."""
+        self.timer.stop()
+        self.close()
+        
+    def closeEvent(self, event):
+        """Gérer la fermeture de la fenêtre."""
+        if self.force_close_button.isVisible():
+            event.accept()
+        else:
+            self.force_close_button.setVisible(True)
+            event.ignore()
