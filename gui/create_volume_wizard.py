@@ -20,8 +20,10 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QWidget
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot
+from PyQt6.QtGui import QIcon
 from utils import VolumeCreation, EntropyCollector
+from .progress_dialog import ProgressDialog
 
 class CreateVolumeWizard(QWizard):
     # Pages du wizard
@@ -47,32 +49,75 @@ class CreateVolumeWizard(QWizard):
         # Ajouter les pages
         self.setPage(self.PAGE_VOLUME, VolumePage(self))
         self.setPage(self.PAGE_PASSWORD, PasswordPage(self))
-        self.setPage(self.PAGE_ENCRYPTION, EncryptionPage(self))
-        self.setPage(self.PAGE_ENTROPY, EntropyPage(self))
+        self.setPage(self.PAGE_PASSWORD + 1, EncryptionPage(self))
+        self.setPage(self.PAGE_PASSWORD + 2, EntropyPage(self))
         
         # Configuration du wizard
         self.setOption(QWizard.WizardOption.HaveHelpButton, False)
         self.setOption(QWizard.WizardOption.NoBackButtonOnStartPage, True)
 
     def accept(self):
-        """Appelé quand le wizard est terminé."""
-        # Créer le volume avec les paramètres collectés
-        success, message = VolumeCreation.create_volume(
-            path=self.volume_path,
-            password=self.password,
-            size=self.volume_size,
-            encryption=self.encryption,
-            hash_algo=self.hash_algo,
-            filesystem=self.filesystem,
-            random_data=self.random_data
-        )
+        """Appelé quand l'utilisateur clique sur Terminer."""
+        # Récupérer toutes les informations
+        volume_path = self.volume_path
+        size = self.volume_size
+        encryption = self.encryption
+        hash_algo = self.hash_algo
+        filesystem = self.filesystem
+        password = self.password
         
-        if success:
-            QMessageBox.information(self, "Succès", message)
-            super().accept()
-        else:
-            QMessageBox.critical(self, "Erreur", message)
-            # Ne pas fermer le wizard en cas d'erreur
+        # Créer la boîte de dialogue de progression
+        progress = ProgressDialog(self)
+        progress.show()
+        
+        # Créer le volume
+        def create_volume():
+            success, message = VolumeCreation.create_volume(
+                path=volume_path,
+                password=password,
+                size=size,
+                encryption=encryption,
+                hash_algo=hash_algo,
+                filesystem=filesystem,
+                random_data=self.random_data,
+                progress_callback=progress.update_progress
+            )
+            
+            # Mettre à jour la boîte de dialogue
+            progress.done(success)
+            
+            # Utiliser invokeMethod pour appeler les méthodes Qt depuis le thread
+            if success:
+                QMetaObject.invokeMethod(self, "show_success_and_close", 
+                                       Qt.ConnectionType.QueuedConnection,
+                                       Q_ARG(str, message))
+            else:
+                QMetaObject.invokeMethod(self, "show_error", 
+                                       Qt.ConnectionType.QueuedConnection,
+                                       Q_ARG(str, message))
+                progress.close()
+        
+        # Lancer la création dans un thread séparé
+        from PyQt6.QtCore import QThread
+        
+        class CreationThread(QThread):
+            def run(self):
+                create_volume()
+        
+        self.creation_thread = CreationThread()
+        self.creation_thread.start()
+    
+    @pyqtSlot(str)
+    def show_success_and_close(self, message):
+        """Affiche le message de succès et ferme le wizard."""
+        QMessageBox.information(self, "Succès", message)
+        super().accept()
+    
+    @pyqtSlot(str)
+    def show_error(self, message):
+        """Affiche le message d'erreur."""
+        QMessageBox.critical(self, "Erreur", message)
+        progress.close()
 
 class EntropyPage(QWizardPage):
     """Page de collecte d'entropie."""
@@ -143,42 +188,81 @@ class EncryptionPage(QWizardPage):
         return True
 
 class PasswordPage(QWizardPage):
-    def __init__(self, wizard):
-        super().__init__(wizard)
+    """Page de saisie du mot de passe."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.setTitle("Mot de passe")
-        self.setSubTitle("Entrez le mot de passe pour le volume.")
+        self.setSubTitle("Choisissez un mot de passe pour votre volume.")
         
         layout = QVBoxLayout()
         
-        # Mot de passe
+        # Champ mot de passe
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(QLabel("Mot de passe :"))
+        self.password_edit.setPlaceholderText("Entrez votre mot de passe")
+        self.password_edit.textChanged.connect(self.on_text_changed)
         layout.addWidget(self.password_edit)
         
-        # Confirmation du mot de passe
+        # Champ confirmation
         self.confirm_edit = QLineEdit()
         self.confirm_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        layout.addWidget(QLabel("Confirmez le mot de passe :"))
+        self.confirm_edit.setPlaceholderText("Confirmez votre mot de passe")
+        self.confirm_edit.textChanged.connect(self.on_text_changed)
         layout.addWidget(self.confirm_edit)
+        
+        # Option pour afficher le mot de passe
+        self.show_password = QCheckBox("Afficher le mot de passe")
+        self.show_password.stateChanged.connect(self.toggle_password_visibility)
+        layout.addWidget(self.show_password)
+        
+        # Message d'erreur
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: red")
+        layout.addWidget(self.error_label)
         
         self.setLayout(layout)
         
-    def validatePage(self) -> bool:
-        if self.password_edit.text() != self.confirm_edit.text():
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Les mots de passe ne correspondent pas."
-            )
+        # État de validation
+        self._is_valid = False
+        
+    def on_text_changed(self):
+        """Appelé quand le texte change dans un des champs."""
+        self._is_valid = self.validate_password()
+        self.completeChanged.emit()
+        
+    def validate_password(self):
+        """Valide le mot de passe saisi."""
+        password = self.password_edit.text()
+        confirm = self.confirm_edit.text()
+        
+        # Vérifier si le mot de passe est vide
+        if not password:
+            self.error_label.setText("Le mot de passe ne peut pas être vide")
             return False
             
-        if not self.password_edit.text():
-            QMessageBox.warning(
-                self,
-                "Erreur",
-                "Le mot de passe ne peut pas être vide."
-            )
+        # Vérifier si les mots de passe correspondent
+        if password != confirm:
+            self.error_label.setText("Les mots de passe ne correspondent pas")
+            return False
+        
+        # Tout est OK
+        self.error_label.clear()
+        return True
+        
+    def isComplete(self):
+        """Détermine si la page est complète."""
+        return self._is_valid
+        
+    def toggle_password_visibility(self, state):
+        """Change la visibilité du mot de passe."""
+        mode = QLineEdit.EchoMode.Normal if state else QLineEdit.EchoMode.Password
+        self.password_edit.setEchoMode(mode)
+        self.confirm_edit.setEchoMode(mode)
+        
+    def validatePage(self):
+        """Valide la page et sauvegarde le mot de passe."""
+        if not self._is_valid:
             return False
             
         self.wizard().password = self.password_edit.text()
