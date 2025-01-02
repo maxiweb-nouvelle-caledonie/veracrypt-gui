@@ -321,6 +321,83 @@ class VolumeCreation:
             return False, f"Erreur : {str(e)}"
             
     @staticmethod
+    def change_password(
+        volume_path: str,
+        current_password: str,
+        new_password: str,
+        current_keyfile: str = None,
+        new_keyfile: str = None
+    ) -> Tuple[bool, str]:
+        """Change le mot de passe d'un volume VeraCrypt existant.
+        
+        Args:
+            volume_path: Chemin vers le volume
+            current_password: Mot de passe actuel
+            new_password: Nouveau mot de passe
+            current_keyfile: Fichier clé actuel (optionnel)
+            new_keyfile: Nouveau fichier clé (optionnel)
+            
+        Returns:
+            Tuple[bool, str]: (Succès, Message)
+        """
+        try:
+            # Vérifier que le volume existe
+            if not os.path.exists(volume_path):
+                logger.error(f"Le volume n'existe pas : {volume_path}")
+                return False, "Le volume spécifié n'existe pas"
+                
+            # Construire la commande
+            command = [
+                'veracrypt',
+                '--text',  # Mode texte
+                '--non-interactive',  # Mode non interactif
+                '--password', current_password,
+                '--new-password', new_password,
+                '--change',  # Mode changement de mot de passe
+                volume_path
+            ]
+            
+            # Ajouter les fichiers clés si spécifiés
+            if current_keyfile:
+                command.extend(['--keyfile', current_keyfile])
+            if new_keyfile:
+                command.extend(['--new-keyfile', new_keyfile])
+                
+            # Exécuter la commande avec sudo
+            process = subprocess.Popen(
+                ['sudo', '-S'] + command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Récupérer et envoyer le mot de passe sudo
+            sudo_password = sudo_session.get_sudo_password()
+            if not sudo_password:
+                logger.error("Mot de passe sudo non disponible")
+                return False, "Mot de passe sudo non disponible"
+                
+            try:
+                stdout, stderr = process.communicate(input=f"{sudo_password}\n", timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                logger.error("Timeout lors du changement de mot de passe")
+                return False, "L'opération a pris trop de temps"
+                
+            if process.returncode != 0:
+                error_msg = stderr.strip() if stderr else "Erreur inconnue"
+                logger.error(f"Erreur lors du changement de mot de passe : {error_msg}")
+                return False, f"Erreur : {error_msg}"
+                
+            logger.info("Mot de passe changé avec succès")
+            return True, "Mot de passe modifié avec succès"
+            
+        except Exception as e:
+            logger.exception("Exception lors du changement de mot de passe")
+            return False, f"Erreur : {str(e)}"
+
+    @staticmethod
     def _parse_size(size: str) -> int:
         """Parse une taille avec son unité en bytes.
         
