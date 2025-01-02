@@ -6,8 +6,8 @@ import time
 import random
 from typing import List, Tuple
 from PyQt6.QtCore import Qt, QPoint, QRect, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QPen
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QProgressBar
+from PyQt6.QtGui import QPainter, QColor, QPen, QPaintEvent
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QProgressBar, QTextEdit
 
 class EntropyCollector(QWidget):
     """Widget pour collecter l'entropie via les mouvements de la souris."""
@@ -15,7 +15,7 @@ class EntropyCollector(QWidget):
     # Signal émis quand assez d'entropie a été collectée
     entropy_collected = pyqtSignal(str)
     
-    def __init__(self, min_points: int = 320, parent=None):
+    def __init__(self, min_points: int = 640, parent=None):
         """Initialise le collecteur d'entropie.
         
         Args:
@@ -32,18 +32,25 @@ class EntropyCollector(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)  # Marges uniformes
         layout.setSpacing(10)  # Espacement entre les widgets
         
-        # Label d'instructions
+        # Label d'instructions principal
         self.label = QLabel(
-            "Déplacez votre souris dans le carré ci-dessous pour générer de l'aléatoire"
+            "Pour générer une clé de chiffrement sécurisée, déplacez votre souris de manière aléatoire dans la zone ci-dessous"
         )
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setWordWrap(True)  # Permettre le retour à la ligne
         layout.addWidget(self.label)
         
         # Widget pour la zone de dessin
-        self.draw_widget = QWidget()
-        self.draw_widget.setFixedSize(360, 100)  # Taille fixe pour la zone de dessin
-        self.draw_rect = QRect(0, 0, 360, 100)
+        self.draw_widget = DrawingArea(self)
+        self.draw_widget.setFixedSize(360, 200)  # Zone plus haute pour le texte
         layout.addWidget(self.draw_widget, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # Zone de texte pour afficher les données collectées
+        self.text_area = QTextEdit()
+        self.text_area.setReadOnly(True)
+        self.text_area.setFixedHeight(100)
+        self.text_area.setPlaceholderText("Les données collectées apparaîtront ici...")
+        layout.addWidget(self.text_area)
         
         # Barre de progression
         self.progress = QProgressBar()
@@ -64,7 +71,8 @@ class EntropyCollector(QWidget):
         self.points.clear()
         self.collecting = True
         self.progress.setValue(0)
-        self.update()
+        self.text_area.clear()
+        self.draw_widget.update()
         
     def mouseMoveEvent(self, event):
         """Gère les mouvements de la souris."""
@@ -75,7 +83,7 @@ class EntropyCollector(QWidget):
         point = self.draw_widget.mapFrom(self, event.pos())
         
         # Vérifier si le point est dans la zone de dessin
-        if not self.draw_rect.contains(point):
+        if not self.draw_widget.rect().contains(point):
             return
             
         # Ajouter les coordonnées et le timestamp
@@ -84,21 +92,17 @@ class EntropyCollector(QWidget):
         # Mettre à jour la progression
         self.progress.setValue(len(self.points))
         
+        # Mettre à jour le texte
+        self.text_area.setText(f"Points collectés : {len(self.points)}/{self.min_points}\n"
+                             f"Dernière position : ({point.x()}, {point.y()})")
+        
+        # Mettre à jour l'affichage
+        self.draw_widget.update()
+        
         # Vérifier si on a assez de points
         if len(self.points) >= self.min_points:
             self.finish_collecting()
             
-    def paintEvent(self, event):
-        """Dessine la zone de collecte."""
-        painter = QPainter(self.draw_widget)
-        
-        # Fond gris clair
-        painter.fillRect(self.draw_rect, QColor(240, 240, 240))
-        
-        # Bordure
-        painter.setPen(QPen(QColor(200, 200, 200), 1))
-        painter.drawRect(self.draw_rect)
-        
     def finish_collecting(self):
         """Termine la collecte et génère la chaîne aléatoire."""
         self.collecting = False
@@ -115,3 +119,38 @@ class EntropyCollector(QWidget):
             
         # Émettre le signal avec la chaîne générée
         self.entropy_collected.emit(''.join(entropy))
+
+class DrawingArea(QWidget):
+    """Widget pour la zone de dessin."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        
+    def paintEvent(self, event: QPaintEvent):
+        """Dessine la zone de collecte."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Fond blanc
+        painter.fillRect(self.rect(), QColor(255, 255, 255))
+        
+        # Bordure épaisse
+        painter.setPen(QPen(QColor(100, 100, 100), 3))
+        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+        
+        # Texte d'instruction dans la zone
+        if not getattr(self.parent, 'points', []):
+            painter.setPen(QColor(120, 120, 120))
+            font = painter.font()
+            font.setPointSize(10)
+            painter.setFont(font)
+            
+            text = "Déplacez votre souris ici\nde manière aléatoire"
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, text)
+        
+        # Dessiner les points collectés
+        if hasattr(self.parent, 'points') and self.parent.points:
+            painter.setPen(QPen(QColor(0, 120, 215), 2))
+            for x, y, _ in self.parent.points[-50:]:
+                painter.drawPoint(x, y)

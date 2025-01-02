@@ -16,6 +16,8 @@ from gui.loading_dialog import LoadingDialog
 from gui.mounted_volumes_list import MountedVolumesList
 from gui.preferences_dialog import PreferencesDialog
 from gui.create_volume_wizard import CreateVolumeWizard
+from gui.change_password_dialog import ChangePasswordWizard
+from utils.volume_creation import VolumeCreation
 from utils import veracrypt, system
 from utils.sudo_session import sudo_session
 from utils.favorites import Favorites
@@ -146,6 +148,11 @@ class MainWindow(QMainWindow):
         create_volume_action = QAction("Créer un nouveau volume...", self)
         create_volume_action.triggered.connect(self._show_create_volume_wizard)
         volumes_menu.addAction(create_volume_action)
+        
+        # Action Changer le mot de passe
+        change_password_action = QAction("Modifier le mot de passe...", self)
+        change_password_action.triggered.connect(self._show_change_password_wizard)
+        volumes_menu.addAction(change_password_action)
         
         volumes_menu.addSeparator()
         
@@ -514,3 +521,43 @@ class MainWindow(QMainWindow):
         """Affiche l'assistant de création de volume."""
         wizard = CreateVolumeWizard(self)
         wizard.exec()
+
+    def _show_change_password_wizard(self):
+        """Affiche l'assistant de changement de mot de passe."""
+        wizard = ChangePasswordWizard(self)
+        self._center_dialog(wizard)
+        
+        if wizard.exec():
+            # Récupérer les informations du wizard
+            volume_path = wizard.volume_path
+            current_password = wizard.current_password
+            new_password = wizard.new_password
+            current_keyfile = wizard.current_keyfile
+            new_keyfile = wizard.new_keyfile
+            
+            # Afficher le dialogue de chargement
+            self.show_loading("Modification du mot de passe en cours...")
+            
+            try:
+                # Changer le mot de passe
+                success, message = VolumeCreation.change_password(
+                    volume_path,
+                    current_password,
+                    new_password,
+                    current_keyfile,
+                    new_keyfile
+                )
+                
+                self.hide_loading()
+                
+                if success:
+                    QMessageBox.information(self, "Succès", message)
+                    self.log_message(f"Mot de passe modifié avec succès pour {volume_path}")
+                else:
+                    QMessageBox.warning(self, "Erreur", message)
+                    self.log_message(f"Erreur lors de la modification du mot de passe : {message}")
+                    
+            except Exception as e:
+                self.hide_loading()
+                QMessageBox.critical(self, "Erreur", f"Une erreur est survenue : {str(e)}")
+                self.log_message(f"Exception lors de la modification du mot de passe : {str(e)}")

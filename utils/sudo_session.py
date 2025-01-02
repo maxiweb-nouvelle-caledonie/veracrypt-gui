@@ -147,8 +147,9 @@ class SudoSession:
                     logger.debug("Rafraîchissement de la session sudo")
                     process = subprocess.run(
                         ['sudo', '-S', '-v'],
-                        input=self._sudo_password + '\n',
-                        capture_output=True
+                        input=(self._sudo_password + '\n').encode(),
+                        capture_output=True,
+                        text=True
                     )
                     if process.returncode == 0:
                         self._sudo_timestamp = time.time()
