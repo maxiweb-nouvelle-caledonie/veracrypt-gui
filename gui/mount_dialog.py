@@ -10,8 +10,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QDir, Qt, QUrl, pyqtSignal
 from typing import Optional, Tuple
+import sys
 import os
 from datetime import datetime
+
+# Ajouter le répertoire parent au PYTHONPATH
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from constants import Constants
 from utils import veracrypt, system
 from utils.favorites import Favorites
